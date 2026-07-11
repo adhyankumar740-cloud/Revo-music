@@ -11,8 +11,6 @@ from BROKENXMUSIC.misc import sudo
 from BROKENXMUSIC.plugins import ALL_MODULES
 from BROKENXMUSIC.utils.database import get_banned_users, get_gbanned
 from config import BANNED_USERS
-from keep_alive import keep_alive
-keep_alive()
 
 async def init():
     if (
