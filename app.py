@@ -68,7 +68,7 @@ async def self_ping():
 
             try:
 
-                await asyncio.sleep(12)
+                await asyncio.sleep(600)
 
                 response = await client.get(
                     url,
