@@ -93,7 +93,7 @@ class Call(PyTgCalls):
         audio_parameters=types.AudioQuality.MEDIUM,
         audio_flags=types.MediaStream.Flags.REQUIRED,
         video_flags=types.MediaStream.Flags.IGNORE,
-        ffmpeg_parameters=ffmpeg,
+        ffmpeg_parameters=f"-threads 1 {ffmpeg}" if ffmpeg else "-threads 1",
     )
 
         
