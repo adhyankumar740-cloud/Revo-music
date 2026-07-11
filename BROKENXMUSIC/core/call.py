@@ -81,24 +81,22 @@ class Call(PyTgCalls):
         )
         self.five = PyTgCalls(self.userbot5, cache_duration=100)
 
+
     def _build_stream(
-        self,
-        source: str,
-        video: bool,
-        ffmpeg: str | None = None,
-    ) -> types.MediaStream:
-        return types.MediaStream(
-            media_path=source,
-            audio_parameters=types.AudioQuality.HIGH,
-            video_parameters=types.VideoQuality.HD_720p,
-            audio_flags=types.MediaStream.Flags.REQUIRED,
-            video_flags=(
-                types.MediaStream.Flags.AUTO_DETECT
-                if video
-                else types.MediaStream.Flags.IGNORE
-            ),
-            ffmpeg_parameters=ffmpeg,
-        )
+    self,
+    source: str,
+    video: bool,
+    ffmpeg: str | None = None,
+) -> types.MediaStream:
+    return types.MediaStream(
+        media_path=source,
+        audio_parameters=types.AudioQuality.MEDIUM,
+        audio_flags=types.MediaStream.Flags.REQUIRED,
+        video_flags=types.MediaStream.Flags.IGNORE,
+        ffmpeg_parameters=ffmpeg,
+    )
+
+        
 
     async def _play_on_assistant(
         self,
