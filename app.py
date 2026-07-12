@@ -1,5 +1,6 @@
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Header, Query, Request
+from fastapi.responses import FileResponse
 import httpx
 import asyncio
 import os
@@ -135,3 +136,55 @@ async def health():
         "status": "healthy",
         "timestamp": time.time()
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# RESOLVE (BrokenXAPI relay for the Android app)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Reuses the SAME Pyrogram client + BrokenXAPI key the bot already uses for
+# /play (see BROKENXMUSIC/platforms/Youtube.py -> download_song()). No new
+# Telegram session, no new BrokenXAPI usage pattern - just an HTTP door into
+# the same flow, for your own Android app instead of a Telegram chat command.
+
+from BROKENXMUSIC import app as tg_client
+from BROKENXMUSIC.platforms.Youtube import download_song
+
+RELAY_API_KEY = os.getenv("RELAY_API_KEY", "")
+
+
+def _check_relay_key(x_relay_key: str | None):
+    if RELAY_API_KEY and x_relay_key != RELAY_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Relay-Key header")
+
+
+@app.get("/resolve")
+async def resolve(
+    request: Request,
+    video_id: str = Query(...),
+    x_relay_key: str | None = Header(default=None),
+):
+    _check_relay_key(x_relay_key)
+
+    log.info(f"🎯 Resolve requested: {video_id}")
+
+    file_path = await download_song(video_id)
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=502, detail="Could not resolve this video")
+
+    filename = os.path.basename(file_path)
+    return {
+        "video_id": video_id,
+        "stream_url": f"{str(request.base_url).rstrip('/')}/audio/{filename}",
+    }
+
+
+@app.get("/audio/{filename}")
+async def audio(filename: str, x_relay_key: str | None = Header(default=None)):
+    _check_relay_key(x_relay_key)
+
+    safe_name = os.path.basename(filename)
+    file_path = os.path.join("downloads", safe_name)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Not found - call /resolve first")
+
+    return FileResponse(file_path, media_type="audio/webm")
