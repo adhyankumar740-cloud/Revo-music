@@ -148,6 +148,8 @@ async def health():
 
 from BROKENXMUSIC import app as tg_client
 from BROKENXMUSIC.platforms.Youtube import download_song
+from BROKENXMUSIC.utils.formatters import time_to_seconds
+from youtube_search import YoutubeSearch
 
 RELAY_API_KEY = os.getenv("RELAY_API_KEY", "")
 
@@ -155,6 +157,52 @@ RELAY_API_KEY = os.getenv("RELAY_API_KEY", "")
 def _check_relay_key(x_relay_key: str | None):
     if RELAY_API_KEY and x_relay_key != RELAY_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing X-Relay-Key header")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SEARCH (BrokenXAPI relay for the Android app)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# No Google/YouTube Data API key here - youtube_search scrapes YouTube's own
+# search results page, same package Youtube.py already uses for /play's
+# track()/details() lookups. Keeps search+metadata on the same relay as
+# playback, instead of needing a separate quota-limited API key on the app.
+
+@app.get("/search")
+async def search(
+    query: str = Query(...),
+    limit: int = Query(default=20, le=25),
+    x_relay_key: str | None = Header(default=None),
+):
+    _check_relay_key(x_relay_key)
+
+    log.info(f"🔎 Search requested: {query}")
+
+    try:
+        raw_results = YoutubeSearch(query, max_results=limit).to_dict()
+    except Exception as e:
+        log.error(f"❌ Search failed: {e}")
+        raise HTTPException(status_code=502, detail="Search failed")
+
+    tracks = []
+    for r in raw_results:
+        video_id = r.get("id")
+        if not video_id:
+            continue
+        duration_str = r.get("duration") or "0:00"
+        try:
+            duration_sec = time_to_seconds(duration_str)
+        except Exception:
+            duration_sec = 0
+        thumbnails = r.get("thumbnails") or [""]
+        tracks.append({
+            "video_id": video_id,
+            "title": r.get("title") or "Unknown Title",
+            "artist": r.get("channel") or "Unknown Artist",
+            "thumbnail": thumbnails[0],
+            "duration_sec": duration_sec,
+        })
+
+    return {"query": query, "results": tracks}
 
 
 @app.get("/resolve")
