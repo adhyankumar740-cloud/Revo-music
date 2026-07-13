@@ -26,3 +26,4 @@ py-yt-search
 yt-dlp
 youtube-search
 youtube-search-python
+httpx
