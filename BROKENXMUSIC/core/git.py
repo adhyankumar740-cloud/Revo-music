@@ -43,29 +43,38 @@ def git():
     except GitCommandError:
         LOGGER(__name__).info(f"Invalid Git Command")
     except InvalidGitRepositoryError:
-        repo = Repo.init()
-        if "origin" in repo.remotes:
-            origin = repo.remote("origin")
-        else:
-            origin = repo.create_remote("origin", UPSTREAM_REPO)
-        origin.fetch()
-        repo.create_head(
-            config.UPSTREAM_BRANCH,
-            origin.refs[config.UPSTREAM_BRANCH],
-        )
-        repo.heads[config.UPSTREAM_BRANCH].set_tracking_branch(
-            origin.refs[config.UPSTREAM_BRANCH]
-        )
-        repo.heads[config.UPSTREAM_BRANCH].checkout(True)
         try:
-            repo.create_remote("origin", config.UPSTREAM_REPO)
-        except BaseException:
-            pass
-        nrs = repo.remote("origin")
-        nrs.fetch(config.UPSTREAM_BRANCH)
-        try:
-            nrs.pull(config.UPSTREAM_BRANCH)
-        except GitCommandError:
-            repo.git.reset("--hard", "FETCH_HEAD")
-        install_req("pip3 install --no-cache-dir -r requirements.txt")
-        LOGGER(__name__).info(f"Fetching updates from upstream repository...")
+            repo = Repo.init()
+            if "origin" in repo.remotes:
+                origin = repo.remote("origin")
+            else:
+                origin = repo.create_remote("origin", UPSTREAM_REPO)
+            origin.fetch()
+            repo.create_head(
+                config.UPSTREAM_BRANCH,
+                origin.refs[config.UPSTREAM_BRANCH],
+            )
+            repo.heads[config.UPSTREAM_BRANCH].set_tracking_branch(
+                origin.refs[config.UPSTREAM_BRANCH]
+            )
+            repo.heads[config.UPSTREAM_BRANCH].checkout(True)
+            try:
+                repo.create_remote("origin", config.UPSTREAM_REPO)
+            except BaseException:
+                pass
+            nrs = repo.remote("origin")
+            nrs.fetch(config.UPSTREAM_BRANCH)
+            try:
+                nrs.pull(config.UPSTREAM_BRANCH)
+            except GitCommandError:
+                repo.git.reset("--hard", "FETCH_HEAD")
+            install_req("pip3 install --no-cache-dir -r requirements.txt")
+            LOGGER(__name__).info(f"Fetching updates from upstream repository...")
+        except Exception as e:
+            # Render (and most container hosts) already deploy from git
+            # themselves - this self-update-via-git feature is meant for
+            # VPS/Heroku setups and isn't needed there. If it fails for any
+            # reason (e.g. a stale ".git/hooks/... File exists" conflict in
+            # the build image), don't crash the whole bot/relay over it -
+            # just skip self-update and keep starting normally.
+            LOGGER(__name__).warning(f"Skipping git self-update (not critical): {e}")
