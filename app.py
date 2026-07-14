@@ -239,7 +239,7 @@ async def search(
     return {"query": query, "results": tracks}
 
 
-RESOLVE_HARD_TIMEOUT = int(os.getenv("RESOLVE_HARD_TIMEOUT", 45))
+RESOLVE_HARD_TIMEOUT = int(os.getenv("RESOLVE_HARD_TIMEOUT", 90))
 
 
 @app.get("/resolve")
