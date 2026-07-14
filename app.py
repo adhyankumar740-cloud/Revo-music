@@ -39,21 +39,31 @@ log.info("🚀 Broken X Network Booting...")
 # LIFESPAN
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+async def _start_telegram_client():
+    if tg_client.is_connected:
+        return
+    log.info("🔐 Starting Telegram client for this process (needed for /resolve)...")
+    try:
+        await tg_client.start()
+        log.info("✅ Telegram client started in FastAPI process")
+    except Exception as e:
+        # /search still works without this - only /resolve needs Telegram,
+        # and it already fails cleanly (502) if the client isn't up yet.
+        log.error(f"❌ Telegram client failed to start: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
     log.info("⚡ Starting FastAPI Lifespan...")
 
-    if not tg_client.is_connected:
-        log.info("🔐 Starting Telegram client for this process (needed for /resolve)...")
-        try:
-            await tg_client.start()
-            log.info("✅ Telegram client started in FastAPI process")
-        except Exception as e:
-            # Don't crash the whole API if this fails - /search will still
-            # work, only /resolve (which needs Telegram) will error until
-            # this is fixed (check API_ID/API_HASH/BOT_TOKEN/LOGGER_ID).
-            log.error(f"❌ Telegram client failed to start: {e}")
+    # IMPORTANT: do NOT await this here. If Telegram login is slow (or gets
+    # stuck), awaiting it would block ASGI startup from ever completing -
+    # meaning uvicorn never opens its port, and Render's port-scan times out
+    # with "no open ports detected" (this is exactly what happened before).
+    # Running it as a background task lets the port open immediately;
+    # /resolve just won't work until this finishes in the background.
+    telegram_start_task = asyncio.create_task(_start_telegram_client())
 
     task = asyncio.create_task(self_ping())
 
@@ -62,6 +72,7 @@ async def lifespan(app: FastAPI):
     log.warning("⚠️ Stopping Background Tasks...")
 
     task.cancel()
+    telegram_start_task.cancel()
 
     try:
         await task
