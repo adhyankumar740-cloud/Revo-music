@@ -11,6 +11,15 @@ import logging
 from BROKENXMUSIC.logging import LOGGER
 from contextlib import asynccontextmanager
 
+# Imported here (instead of further down) so it's available to lifespan()
+# below. This is the SAME Pyrogram client class used by the bot process
+# (python3 -m BROKENXMUSIC), but since start.sh runs the bot and this FastAPI
+# server as two SEPARATE OS processes, they do NOT share a live connection -
+# each process needs its own .start() call. Without this, /resolve fails
+# with "Client has not been started yet" as soon as it tries to fetch the
+# downloaded file back from Telegram.
+from BROKENXMUSIC import app as tg_client
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GLOBAL LOGGING
@@ -35,6 +44,17 @@ async def lifespan(app: FastAPI):
 
     log.info("⚡ Starting FastAPI Lifespan...")
 
+    if not tg_client.is_connected:
+        log.info("🔐 Starting Telegram client for this process (needed for /resolve)...")
+        try:
+            await tg_client.start()
+            log.info("✅ Telegram client started in FastAPI process")
+        except Exception as e:
+            # Don't crash the whole API if this fails - /search will still
+            # work, only /resolve (which needs Telegram) will error until
+            # this is fixed (check API_ID/API_HASH/BOT_TOKEN/LOGGER_ID).
+            log.error(f"❌ Telegram client failed to start: {e}")
+
     task = asyncio.create_task(self_ping())
 
     yield
@@ -48,6 +68,10 @@ async def lifespan(app: FastAPI):
 
     except asyncio.CancelledError:
         log.info("✅ Heartbeat Task Cancelled")
+
+    if tg_client.is_connected:
+        await tg_client.stop()
+        log.info("🔌 Telegram client stopped")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -146,7 +170,6 @@ async def health():
 # Telegram session, no new BrokenXAPI usage pattern - just an HTTP door into
 # the same flow, for your own Android app instead of a Telegram chat command.
 
-from BROKENXMUSIC import app as tg_client
 from BROKENXMUSIC.platforms.Youtube import download_song
 from BROKENXMUSIC.utils.formatters import time_to_seconds
 from youtube_search import YoutubeSearch
