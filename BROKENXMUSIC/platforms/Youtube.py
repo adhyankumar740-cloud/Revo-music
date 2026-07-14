@@ -45,6 +45,16 @@ BROKENXAPI_TIMEOUT = int(os.getenv("BROKENXAPI_TIMEOUT", 25))
 # msg.download() is kicked off.
 TELEGRAM_FILE_WAIT_TIMEOUT = int(os.getenv("TELEGRAM_FILE_WAIT_TIMEOUT", 30))
 
+# app.get_messages() and msg.download() were the two calls with NO timeout at
+# all - if the assistant account had trouble reaching the channel (network
+# hiccup, flood wait, etc.) these could hang indefinitely with zero log
+# output, which is exactly what we saw: BROKENXAPI_TIMEOUT never fired, but
+# the outer 45s resolve timeout did. Bounding these individually means we'll
+# now get a clear log line naming the actual slow step instead of a generic
+# timeout after the fact.
+GET_MESSAGES_TIMEOUT = int(os.getenv("GET_MESSAGES_TIMEOUT", 15))
+MSG_DOWNLOAD_TIMEOUT = int(os.getenv("MSG_DOWNLOAD_TIMEOUT", 20))
+
 
 async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) -> str:
     logger = LOGGER("BrokenAPI/Youtube.py")
@@ -67,7 +77,16 @@ async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) ->
         message_id = int(parts[1])
 
         logger.info(f"📨 [TELEGRAM] Fetching message {message_id} from {channel_name} for {video_id}")
-        msg = await app.get_messages(channel_name, message_id)
+        try:
+            msg = await asyncio.wait_for(
+                app.get_messages(channel_name, message_id), timeout=GET_MESSAGES_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"⏱️ [TELEGRAM] get_messages() hung for {GET_MESSAGES_TIMEOUT}s on {channel_name}/{message_id} "
+                f"for {video_id} - assistant account likely can't reach this channel (no access / flood wait / network issue)"
+            )
+            return None
 
         if msg is None:
             logger.error(f"❌ [TELEGRAM] get_messages returned None for {channel_name}/{message_id} - wrong channel/message id, or bot has no access to it")
@@ -84,7 +103,13 @@ async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) ->
             return None
 
         os.makedirs("downloads", exist_ok=True)
-        download_result = await msg.download(file_name=file_path)
+        try:
+            download_result = await asyncio.wait_for(
+                msg.download(file_name=file_path), timeout=MSG_DOWNLOAD_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"⏱️ [TELEGRAM] msg.download() hung for {MSG_DOWNLOAD_TIMEOUT}s for {video_id}")
+            return None
         logger.info(f"📥 [TELEGRAM] download() for {video_id} returned: {download_result}")
 
         timeout = 0
