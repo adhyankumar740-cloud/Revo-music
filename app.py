@@ -239,6 +239,9 @@ async def search(
     return {"query": query, "results": tracks}
 
 
+RESOLVE_HARD_TIMEOUT = int(os.getenv("RESOLVE_HARD_TIMEOUT", 45))
+
+
 @app.get("/resolve")
 async def resolve(
     request: Request,
@@ -247,9 +250,21 @@ async def resolve(
 ):
     _check_relay_key(x_relay_key)
 
+    # If the Telegram client for THIS process hasn't finished logging in yet
+    # (it starts in the background - see lifespan()), get_messages() would
+    # otherwise hang/fail unpredictably. Tell the app to retry shortly
+    # instead of letting the request sit until the gateway kills it.
+    if not tg_client.is_connected:
+        raise HTTPException(status_code=503, detail="Server is still starting up, retry in a few seconds")
+
     log.info(f"🎯 Resolve requested: {video_id}")
 
-    file_path = await download_song(video_id)
+    try:
+        file_path = await asyncio.wait_for(download_song(video_id), timeout=RESOLVE_HARD_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.error(f"⏱️ Resolve timed out for {video_id} after {RESOLVE_HARD_TIMEOUT}s")
+        raise HTTPException(status_code=504, detail="Resolving this video took too long, try again")
+
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=502, detail="Could not resolve this video")
 
