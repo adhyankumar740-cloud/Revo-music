@@ -56,12 +56,26 @@ async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) ->
         channel_name = parts[0]
         message_id = int(parts[1])
 
-        
-
+        logger.info(f"📨 [TELEGRAM] Fetching message {message_id} from {channel_name} for {video_id}")
         msg = await app.get_messages(channel_name, message_id)
 
+        if msg is None:
+            logger.error(f"❌ [TELEGRAM] get_messages returned None for {channel_name}/{message_id} - wrong channel/message id, or bot has no access to it")
+            return None
+
+        has_media = any([msg.audio, msg.voice, msg.document, msg.video])
+        logger.info(
+            f"📎 [TELEGRAM] Message fetched for {video_id} - has_media={has_media} "
+            f"(audio={bool(msg.audio)}, voice={bool(msg.voice)}, document={bool(msg.document)}, video={bool(msg.video)})"
+        )
+
+        if not has_media:
+            logger.error(f"❌ [TELEGRAM] Message {channel_name}/{message_id} has no file yet for {video_id} - BrokenXAPI probably hadn't finished uploading it when we checked")
+            return None
+
         os.makedirs("downloads", exist_ok=True)
-        await msg.download(file_name=file_path)
+        download_result = await msg.download(file_name=file_path)
+        logger.info(f"📥 [TELEGRAM] download() for {video_id} returned: {download_result}")
 
         timeout = 0
         while not os.path.exists(file_path) and timeout < 60:
@@ -72,7 +86,7 @@ async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) ->
             logger.info(f"✅ [TELEGRAM] Downloaded: {video_id}")
             return file_path
         else:
-            logger.error(f"❌ [TELEGRAM] Timeout: {video_id}")
+            logger.error(f"❌ [TELEGRAM] Timeout: {video_id} - download() returned {download_result!r} but no file ever showed up at {file_path}")
             return None
 
     except Exception as e:
