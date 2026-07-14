@@ -35,6 +35,16 @@ from brokenxapi import BrokenXAPI
 
 API_KEY = os.getenv("API_KEY", "PUT_YOUR_BROKENXAPI_KEY_HERE") #GET THIS FROM TG: https://t.me/BROKENXNETWORK1 or https://t.me/AboutBrokenX
 
+# How long we'll wait on the external BrokenXAPI download/convert call before
+# giving up. Without this, a slow/hung upstream response hangs the whole
+# request until the platform's own gateway timeout (Render/Koyeb) kills it -
+# which shows up as an unexplained timeout with no useful error in our logs.
+BROKENXAPI_TIMEOUT = int(os.getenv("BROKENXAPI_TIMEOUT", 25))
+
+# How long we'll wait for the downloaded file to actually land on disk after
+# msg.download() is kicked off.
+TELEGRAM_FILE_WAIT_TIMEOUT = int(os.getenv("TELEGRAM_FILE_WAIT_TIMEOUT", 30))
+
 
 async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) -> str:
     logger = LOGGER("BrokenAPI/Youtube.py")
@@ -78,7 +88,7 @@ async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) ->
         logger.info(f"📥 [TELEGRAM] download() for {video_id} returned: {download_result}")
 
         timeout = 0
-        while not os.path.exists(file_path) and timeout < 60:
+        while not os.path.exists(file_path) and timeout < TELEGRAM_FILE_WAIT_TIMEOUT:
             await asyncio.sleep(0.5)
             timeout += 0.5
 
@@ -112,7 +122,9 @@ async def download_song(link: str) -> str:
 
     try:
         async with BrokenXAPI(api_key=API_KEY) as api:
-            data = await api.download(video_id, "audio")
+            data = await asyncio.wait_for(
+                api.download(video_id, "audio"), timeout=BROKENXAPI_TIMEOUT
+            )
 
         if not data or "telegram_url" not in data:
             logger.error(f"❌ [AUDIO] Invalid SDK response: {data}")
@@ -120,6 +132,9 @@ async def download_song(link: str) -> str:
 
         return await get_telegram_file(data["telegram_url"], video_id, "audio")
 
+    except asyncio.TimeoutError:
+        logger.error(f"⏱️ [AUDIO] BrokenXAPI did not respond within {BROKENXAPI_TIMEOUT}s for {video_id}")
+        return None
     except Exception as e:
         logger.error(f"❌ [AUDIO] Exception: {e}")
         return None
