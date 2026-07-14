@@ -181,9 +181,10 @@ async def health():
 # Telegram session, no new BrokenXAPI usage pattern - just an HTTP door into
 # the same flow, for your own Android app instead of a Telegram chat command.
 
-from BROKENXMUSIC.platforms.Youtube import download_song
+from BROKENXMUSIC.platforms.Youtube import resolve_song_stream_location, GET_MESSAGES_TIMEOUT
 from BROKENXMUSIC.utils.formatters import time_to_seconds
 from youtube_search import YoutubeSearch
+from fastapi.responses import StreamingResponse
 
 RELAY_API_KEY = os.getenv("RELAY_API_KEY", "")
 
@@ -239,7 +240,11 @@ async def search(
     return {"query": query, "results": tracks}
 
 
-RESOLVE_HARD_TIMEOUT = int(os.getenv("RESOLVE_HARD_TIMEOUT", 90))
+# RESOLVE no longer downloads anything - it only finds WHERE the file lives
+# on Telegram (BrokenXAPI call + one get_messages lookup), so it returns in
+# a few seconds regardless of file size. This bound only needs to cover
+# BROKENXAPI_TIMEOUT + GET_MESSAGES_TIMEOUT, not a full download anymore.
+RESOLVE_HARD_TIMEOUT = int(os.getenv("RESOLVE_HARD_TIMEOUT", 45))
 
 
 @app.get("/resolve")
@@ -260,19 +265,61 @@ async def resolve(
     log.info(f"🎯 Resolve requested: {video_id}")
 
     try:
-        file_path = await asyncio.wait_for(download_song(video_id), timeout=RESOLVE_HARD_TIMEOUT)
+        channel_name, message_id = await asyncio.wait_for(
+            resolve_song_stream_location(video_id), timeout=RESOLVE_HARD_TIMEOUT
+        )
     except asyncio.TimeoutError:
         log.error(f"⏱️ Resolve timed out for {video_id} after {RESOLVE_HARD_TIMEOUT}s")
         raise HTTPException(status_code=504, detail="Resolving this video took too long, try again")
 
-    if not file_path or not os.path.exists(file_path):
+    if not channel_name:
         raise HTTPException(status_code=502, detail="Could not resolve this video")
 
-    filename = os.path.basename(file_path)
     return {
         "video_id": video_id,
-        "stream_url": f"{str(request.base_url).rstrip('/')}/audio/{filename}",
+        "stream_url": f"{str(request.base_url).rstrip('/')}/stream/{channel_name}/{message_id}",
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# STREAM (proxies audio bytes chunk-by-chunk, no server-side download)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Uses Pyrogram's stream_media() to pull the file from Telegram in pieces
+# and forward each piece straight into the HTTP response as it arrives.
+# The Android app can start playing as soon as the first chunks land,
+# instead of waiting for the whole file to be downloaded to disk first.
+
+@app.get("/stream/{channel_name}/{message_id}")
+async def stream(
+    channel_name: str,
+    message_id: int,
+    x_relay_key: str | None = Header(default=None),
+):
+    _check_relay_key(x_relay_key)
+
+    if not tg_client.is_connected:
+        raise HTTPException(status_code=503, detail="Server is still starting up, retry in a few seconds")
+
+    try:
+        msg = await asyncio.wait_for(
+            tg_client.get_messages(channel_name, message_id), timeout=GET_MESSAGES_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Could not fetch this file in time")
+
+    media = msg and (msg.audio or msg.voice or msg.document or msg.video)
+    if not media:
+        raise HTTPException(status_code=404, detail="No media at this message - resolve again")
+
+    file_size = getattr(media, "file_size", None)
+    mime_type = getattr(media, "mime_type", None) or "audio/mpeg"
+
+    async def chunk_stream():
+        async for chunk in tg_client.stream_media(msg):
+            yield chunk
+
+    headers = {"Content-Length": str(file_size)} if file_size else {}
+    return StreamingResponse(chunk_stream(), media_type=mime_type, headers=headers)
 
 
 @app.get("/audio/{filename}")
