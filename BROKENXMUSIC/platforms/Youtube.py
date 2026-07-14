@@ -43,7 +43,7 @@ BROKENXAPI_TIMEOUT = int(os.getenv("BROKENXAPI_TIMEOUT", 25))
 
 # How long we'll wait for the downloaded file to actually land on disk after
 # msg.download() is kicked off.
-TELEGRAM_FILE_WAIT_TIMEOUT = int(os.getenv("TELEGRAM_FILE_WAIT_TIMEOUT", 30))
+TELEGRAM_FILE_WAIT_TIMEOUT = int(os.getenv("TELEGRAM_FILE_WAIT_TIMEOUT", 60))
 
 # app.get_messages() and msg.download() were the two calls with NO timeout at
 # all - if the assistant account had trouble reaching the channel (network
@@ -54,6 +54,82 @@ TELEGRAM_FILE_WAIT_TIMEOUT = int(os.getenv("TELEGRAM_FILE_WAIT_TIMEOUT", 30))
 # timeout after the fact.
 GET_MESSAGES_TIMEOUT = int(os.getenv("GET_MESSAGES_TIMEOUT", 15))
 MSG_DOWNLOAD_TIMEOUT = int(os.getenv("MSG_DOWNLOAD_TIMEOUT", 20))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# STREAMING PATH (Android app relay)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Group-VC playback (download_song/get_telegram_file below) NEEDS a full
+# local file on disk because pytgcalls streams from a file path. The relay
+# for the Android app doesn't - it just proxies bytes over HTTP - so instead
+# of blocking /resolve on a full server-side download-then-wait-for-disk
+# cycle (which is what kept timing out), we only resolve WHERE the file
+# lives on Telegram here. The actual bytes are fetched chunk-by-chunk,
+# lazily, only when the client hits /stream - via Pyrogram's stream_media().
+# This means /resolve returns almost immediately regardless of file size,
+# and playback can start before the whole file has even been fetched.
+
+async def resolve_telegram_location(telegram_url: str, video_id: str):
+    """Look up the (channel, message_id) for a BrokenXAPI telegram_url
+    WITHOUT downloading anything. Returns (None, None) on any failure."""
+    logger = LOGGER("BrokenAPI/Youtube.py")
+
+    parsed = urlparse(telegram_url)
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) < 2:
+        logger.error(f"❌ [STREAM] Invalid Telegram link format: {telegram_url}")
+        return None, None
+
+    channel_name = parts[0]
+    message_id = int(parts[1])
+
+    try:
+        msg = await asyncio.wait_for(
+            app.get_messages(channel_name, message_id), timeout=GET_MESSAGES_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            f"⏱️ [STREAM] get_messages() hung for {GET_MESSAGES_TIMEOUT}s on "
+            f"{channel_name}/{message_id} for {video_id}"
+        )
+        return None, None
+
+    if msg is None or not any([msg.audio, msg.voice, msg.document, msg.video]):
+        logger.error(f"❌ [STREAM] No usable media at {channel_name}/{message_id} for {video_id}")
+        return None, None
+
+    logger.info(f"✅ [STREAM] Located {video_id} at {channel_name}/{message_id}")
+    return channel_name, message_id
+
+
+async def resolve_song_stream_location(link: str):
+    """Same BrokenXAPI call as download_song(), but stops right after
+    finding the Telegram message - no download, no disk write."""
+    video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
+    logger = LOGGER("BrokenXAPI")
+
+    if not video_id or len(video_id) < 3:
+        logger.error(f"❌ [STREAM] Invalid video ID: {video_id}")
+        return None, None
+
+    try:
+        async with BrokenXAPI(api_key=API_KEY) as api:
+            data = await asyncio.wait_for(
+                api.download(video_id, "audio"), timeout=BROKENXAPI_TIMEOUT
+            )
+
+        if not data or "telegram_url" not in data:
+            logger.error(f"❌ [STREAM] Invalid SDK response: {data}")
+            return None, None
+
+        return await resolve_telegram_location(data["telegram_url"], video_id)
+
+    except asyncio.TimeoutError:
+        logger.error(f"⏱️ [STREAM] BrokenXAPI did not respond within {BROKENXAPI_TIMEOUT}s for {video_id}")
+        return None, None
+    except Exception as e:
+        logger.error(f"❌ [STREAM] Exception: {e}")
+        return None, None
 
 
 async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) -> str:
@@ -112,10 +188,16 @@ async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) ->
             return None
         logger.info(f"📥 [TELEGRAM] download() for {video_id} returned: {download_result}")
 
-        timeout = 0
-        while not os.path.exists(file_path) and timeout < TELEGRAM_FILE_WAIT_TIMEOUT:
-            await asyncio.sleep(0.5)
-            timeout += 0.5
+        # Pyrogram's msg.download() already blocks until the file is fully
+        # written and returns the actual saved path - it does NOT return
+        # early. Trust that return value directly instead of re-polling
+        # os.path.exists() on our own expected file_path: if Pyrogram saved
+        # it under a slightly different name/path than we assumed, the old
+        # polling loop would spin for the full timeout and fail even though
+        # the download had already succeeded.
+        if download_result and os.path.exists(download_result):
+            logger.info(f"✅ [TELEGRAM] Downloaded: {video_id} -> {download_result}")
+            return download_result
 
         if os.path.exists(file_path):
             logger.info(f"✅ [TELEGRAM] Downloaded: {video_id}")
