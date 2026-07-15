@@ -218,13 +218,25 @@ async def prefetch_video(video_id: str):
     """Fire-and-forget warm-up called from /search. Kicks off the exact
     same resolve a real /resolve request would do, so a brand new video's
     BrokenXAPI download+convert+upload happens while the user is still
-    browsing search results instead of after they tap play."""
+    browsing search results instead of after they tap play. Also pulls the
+    first chunk of the actual Telegram file - opening Pyrogram's media-DC
+    session early is a real, separate chunk of the delay, and paying for it
+    now means the real /stream request just gets bytes immediately instead
+    of negotiating that session itself."""
     if video_id in _prefetching or _cache_get(video_id)[0]:
         return
     _prefetching.add(video_id)
     logger = LOGGER("BrokenXAPI")
     try:
-        await resolve_song_stream_location(video_id)
+        channel_name, message_id = await resolve_song_stream_location(video_id)
+        if channel_name:
+            msg = await get_cached_message(channel_name, message_id, video_id)
+            if msg:
+                try:
+                    async for _ in app.stream_media(msg, limit=1):
+                        break
+                except Exception as e:
+                    logger.error(f"❌ [PREFETCH] warm-stream failed for {video_id}: {e}")
     except Exception as e:
         logger.error(f"❌ [PREFETCH] {video_id}: {e}")
     finally:
