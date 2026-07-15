@@ -7,6 +7,7 @@ import asyncio
 import os
 import re
 import json
+import time
 from typing import Union
 import requests
 import yt_dlp
@@ -69,6 +70,23 @@ MSG_DOWNLOAD_TIMEOUT = int(os.getenv("MSG_DOWNLOAD_TIMEOUT", 20))
 # This means /resolve returns almost immediately regardless of file size,
 # and playback can start before the whole file has even been fetched.
 
+async def _confirm_telegram_message(channel_name: str, message_id: int, video_id: str, logger) -> bool:
+    """Shared has-the-media-actually-landed check, used both for a fresh
+    BrokenXAPI telegram_url and for re-confirming a cache hit below."""
+    try:
+        msg = await asyncio.wait_for(
+            app.get_messages(channel_name, message_id), timeout=GET_MESSAGES_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            f"⏱️ [STREAM] get_messages() hung for {GET_MESSAGES_TIMEOUT}s on "
+            f"{channel_name}/{message_id} for {video_id}"
+        )
+        return False
+
+    return bool(msg and any([msg.audio, msg.voice, msg.document, msg.video]))
+
+
 async def resolve_telegram_location(telegram_url: str, video_id: str):
     """Look up the (channel, message_id) for a BrokenXAPI telegram_url
     WITHOUT downloading anything. Returns (None, None) on any failure."""
@@ -83,23 +101,46 @@ async def resolve_telegram_location(telegram_url: str, video_id: str):
     channel_name = parts[0]
     message_id = int(parts[1])
 
-    try:
-        msg = await asyncio.wait_for(
-            app.get_messages(channel_name, message_id), timeout=GET_MESSAGES_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        logger.error(
-            f"⏱️ [STREAM] get_messages() hung for {GET_MESSAGES_TIMEOUT}s on "
-            f"{channel_name}/{message_id} for {video_id}"
-        )
-        return None, None
-
-    if msg is None or not any([msg.audio, msg.voice, msg.document, msg.video]):
+    if not await _confirm_telegram_message(channel_name, message_id, video_id, logger):
         logger.error(f"❌ [STREAM] No usable media at {channel_name}/{message_id} for {video_id}")
         return None, None
 
     logger.info(f"✅ [STREAM] Located {video_id} at {channel_name}/{message_id}")
     return channel_name, message_id
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# RESOLVE CACHE + PREFETCH (cuts the "first play buffers a lot" delay)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# The slow part of a first-time /resolve is the BrokenXAPI api.download()
+# call itself - THAT is what actually pulls the video from YouTube, converts
+# it, and uploads it to the Telegram channel. Once that's done once, we
+# already know exactly where the file lives, so:
+#   1. we cache (video_id -> channel_name, message_id) after every
+#      successful resolve, and skip straight past BrokenXAPI on a hit
+#      (just re-confirming the Telegram message is still there, which is
+#      fast - one get_messages() call instead of a full download+upload).
+#   2. app.py's /search calls prefetch_video() on the top results in the
+#      background, so the BrokenXAPI download for a brand new song starts
+#      while the user is still looking at the results list, not after they
+#      tap play.
+RESOLVE_CACHE_TTL = int(os.getenv("RESOLVE_CACHE_TTL", 21600))  # 6h
+_resolve_cache: dict[str, tuple[str, int, float]] = {}
+
+
+def _cache_get(video_id: str):
+    entry = _resolve_cache.get(video_id)
+    if not entry:
+        return None, None
+    channel_name, message_id, ts = entry
+    if time.monotonic() - ts > RESOLVE_CACHE_TTL:
+        _resolve_cache.pop(video_id, None)
+        return None, None
+    return channel_name, message_id
+
+
+def _cache_put(video_id: str, channel_name: str, message_id: int):
+    _resolve_cache[video_id] = (channel_name, message_id, time.monotonic())
 
 
 async def resolve_song_stream_location(link: str):
@@ -112,6 +153,13 @@ async def resolve_song_stream_location(link: str):
         logger.error(f"❌ [STREAM] Invalid video ID: {video_id}")
         return None, None
 
+    cached_channel, cached_message_id = _cache_get(video_id)
+    if cached_channel:
+        if await _confirm_telegram_message(cached_channel, cached_message_id, video_id, logger):
+            logger.info(f"⚡ [STREAM] Cache hit for {video_id} at {cached_channel}/{cached_message_id}")
+            return cached_channel, cached_message_id
+        _resolve_cache.pop(video_id, None)  # stale - fall through to a full resolve
+
     try:
         async with BrokenXAPI(api_key=API_KEY) as api:
             data = await asyncio.wait_for(
@@ -122,7 +170,10 @@ async def resolve_song_stream_location(link: str):
             logger.error(f"❌ [STREAM] Invalid SDK response: {data}")
             return None, None
 
-        return await resolve_telegram_location(data["telegram_url"], video_id)
+        channel_name, message_id = await resolve_telegram_location(data["telegram_url"], video_id)
+        if channel_name:
+            _cache_put(video_id, channel_name, message_id)
+        return channel_name, message_id
 
     except asyncio.TimeoutError:
         logger.error(f"⏱️ [STREAM] BrokenXAPI did not respond within {BROKENXAPI_TIMEOUT}s for {video_id}")
@@ -130,6 +181,26 @@ async def resolve_song_stream_location(link: str):
     except Exception as e:
         logger.error(f"❌ [STREAM] Exception: {e}")
         return None, None
+
+
+_prefetching: set[str] = set()
+
+
+async def prefetch_video(video_id: str):
+    """Fire-and-forget warm-up called from /search. Kicks off the exact
+    same resolve a real /resolve request would do, so a brand new video's
+    BrokenXAPI download+convert+upload happens while the user is still
+    browsing search results instead of after they tap play."""
+    if video_id in _prefetching or _cache_get(video_id)[0]:
+        return
+    _prefetching.add(video_id)
+    logger = LOGGER("BrokenXAPI")
+    try:
+        await resolve_song_stream_location(video_id)
+    except Exception as e:
+        logger.error(f"❌ [PREFETCH] {video_id}: {e}")
+    finally:
+        _prefetching.discard(video_id)
 
 
 async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) -> str:
