@@ -181,7 +181,7 @@ async def health():
 # Telegram session, no new BrokenXAPI usage pattern - just an HTTP door into
 # the same flow, for your own Android app instead of a Telegram chat command.
 
-from BROKENXMUSIC.platforms.Youtube import resolve_song_stream_location, GET_MESSAGES_TIMEOUT, prefetch_video
+from BROKENXMUSIC.platforms.Youtube import resolve_song_stream_location, GET_MESSAGES_TIMEOUT, prefetch_video, get_cached_message
 from BROKENXMUSIC.utils.formatters import time_to_seconds
 from youtube_search import YoutubeSearch
 from fastapi.responses import StreamingResponse
@@ -322,13 +322,7 @@ async def stream(
     if not tg_client.is_connected:
         raise HTTPException(status_code=503, detail="Server is still starting up, retry in a few seconds")
 
-    try:
-        msg = await asyncio.wait_for(
-            tg_client.get_messages(channel_name, message_id), timeout=GET_MESSAGES_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Could not fetch this file in time")
-
+    msg = await get_cached_message(channel_name, message_id)
     media = msg and (msg.audio or msg.voice or msg.document or msg.video)
     if not media:
         raise HTTPException(status_code=404, detail="No media at this message - resolve again")
