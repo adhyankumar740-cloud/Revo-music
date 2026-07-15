@@ -73,6 +73,31 @@ MSG_DOWNLOAD_TIMEOUT = int(os.getenv("MSG_DOWNLOAD_TIMEOUT", 20))
 async def _confirm_telegram_message(channel_name: str, message_id: int, video_id: str, logger) -> bool:
     """Shared has-the-media-actually-landed check, used both for a fresh
     BrokenXAPI telegram_url and for re-confirming a cache hit below."""
+    msg = await get_cached_message(channel_name, message_id, video_id)
+    return msg is not None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MESSAGE CACHE (shared between /resolve's confirm step and /stream)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# /resolve already fetches this exact Message via get_messages() to confirm
+# the media landed. Without this cache, /stream fetched the SAME message
+# again a moment later - a second Telegram round-trip for information we
+# already had. Reusing it here removes that duplicate call on every play,
+# not just the first one.
+_message_cache: dict[tuple[str, int], tuple[object, float]] = {}
+
+
+async def get_cached_message(channel_name: str, message_id: int, video_id: str = ""):
+    key = (channel_name, message_id)
+    cached = _message_cache.get(key)
+    if cached:
+        msg, ts = cached
+        if time.monotonic() - ts <= RESOLVE_CACHE_TTL:
+            return msg
+        _message_cache.pop(key, None)
+
+    logger = LOGGER("BrokenXAPI")
     try:
         msg = await asyncio.wait_for(
             app.get_messages(channel_name, message_id), timeout=GET_MESSAGES_TIMEOUT
@@ -82,9 +107,12 @@ async def _confirm_telegram_message(channel_name: str, message_id: int, video_id
             f"⏱️ [STREAM] get_messages() hung for {GET_MESSAGES_TIMEOUT}s on "
             f"{channel_name}/{message_id} for {video_id}"
         )
-        return False
+        return None
 
-    return bool(msg and any([msg.audio, msg.voice, msg.document, msg.video]))
+    if msg and any([msg.audio, msg.voice, msg.document, msg.video]):
+        _message_cache[key] = (msg, time.monotonic())
+        return msg
+    return None
 
 
 async def resolve_telegram_location(telegram_url: str, video_id: str):
