@@ -181,12 +181,31 @@ async def health():
 # Telegram session, no new BrokenXAPI usage pattern - just an HTTP door into
 # the same flow, for your own Android app instead of a Telegram chat command.
 
-from BROKENXMUSIC.platforms.Youtube import resolve_song_stream_location, GET_MESSAGES_TIMEOUT
+from BROKENXMUSIC.platforms.Youtube import resolve_song_stream_location, GET_MESSAGES_TIMEOUT, prefetch_video
 from BROKENXMUSIC.utils.formatters import time_to_seconds
 from youtube_search import YoutubeSearch
 from fastapi.responses import StreamingResponse
 
 RELAY_API_KEY = os.getenv("RELAY_API_KEY", "")
+
+# How many of the top /search results to start resolving in the background
+# right away, instead of waiting for the user to actually tap one. This is
+# what removes the "first play buffers a lot" wait - the slow part
+# (BrokenXAPI download+convert+upload) now happens while they're still
+# looking at the results list.
+PREFETCH_TOP_N = int(os.getenv("PREFETCH_TOP_N", 4))
+
+# asyncio only holds a WEAK reference to a task's coroutine while it runs -
+# if we don't keep our own reference, a fire-and-forget task can get
+# garbage-collected mid-flight. Keep them in a set and drop each one via its
+# own done-callback once it finishes.
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _fire_and_forget(coro):
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 
 def _check_relay_key(x_relay_key: str | None):
@@ -236,6 +255,9 @@ async def search(
             "thumbnail": thumbnails[0],
             "duration_sec": duration_sec,
         })
+
+    for track in tracks[:PREFETCH_TOP_N]:
+        _fire_and_forget(prefetch_video(track["video_id"]))
 
     return {"query": query, "results": tracks}
 
