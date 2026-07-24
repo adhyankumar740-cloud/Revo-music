@@ -454,4 +454,3 @@ class YouTubeAPI:
             logger = LOGGER("BrokenAPI/Youtube.py")
             logger.error(f"❌ Download failed: {e}")
             return None, False
-
