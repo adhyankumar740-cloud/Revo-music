@@ -38,11 +38,6 @@ def _normalize_channel(c):
 SONG_CACHE_SOURCE_CHANNELS = [
     _normalize_channel(c) for c in getenv("SONG_CACHE_SOURCE_CHANNELS", "").split(",") if c.strip()
 ]
-OWN_CHANNEL_SEARCH_LIMIT = int(getenv("OWN_CHANNEL_SEARCH_LIMIT", 5))
-# Warm-up index: how long (in hours) a cached index of SONG_CACHE_SOURCE_CHANNELS
-# is considered fresh before it's rebuilt. 0 = never auto-refresh (only rebuilds
-# if the cache file is missing or you call warm_up(force_refresh=True)).
-MY_MUSIC_INDEX_TTL_HOURS = int(getenv("MY_MUSIC_INDEX_TTL_HOURS", 24))
 
 # Song Cache: turns your source channels + this single auto-growing channel
 # into a fast MongoDB-indexed local library (see BROKENXMUSIC/platforms/SongCache.py).
