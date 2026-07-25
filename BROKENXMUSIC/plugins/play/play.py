@@ -378,14 +378,29 @@ async def play_commnd(
             from_cache = bool(tg_details) and not from_cdn
 
             if not tg_details:
+                # Cache miss: race TgScrap (progressive FIFO streaming —
+                # doesn't wait for the whole file) against a direct yt-dlp
+                # download, in parallel. Whichever produces usable audio
+                # first wins and the other is cancelled — so playback is
+                # no longer fully hostage to vkmusic_bot's own reply speed.
                 try:
-                    tg_details, tg_filepath = await TgScrap.download(query)
+                    tg_details, tg_filepath = await YouTube.race_download(
+                        query, TgScrap.stream_or_download(query)
+                    )
                 except Exception:
-                    tg_details = None
+                    tg_details, tg_filepath = None, None
 
-                # Fresh vkmusic_bot download succeeded — grow the cache so the
-                # next request for this song is instant.
-                if tg_details and config.ENABLE_SONG_CACHE and config.SONG_CACHE_CHANNEL:
+                # Fresh download succeeded — grow the cache so the next
+                # request for this song is instant. Only cache actual
+                # on-disk files, not FIFOs (nothing to upload from a pipe
+                # that's already been fully consumed by playback).
+                if (
+                    tg_details
+                    and tg_filepath
+                    and not tg_filepath.endswith(".fifo")
+                    and config.ENABLE_SONG_CACHE
+                    and config.SONG_CACHE_CHANNEL
+                ):
                     try:
                         await SongCache.save_to_cache(
                             query, tg_filepath, tg_details["title"], tg_details["duration_min"]
