@@ -372,7 +372,8 @@ async def play_commnd(
             if cache_hit:
                 try:
                     tg_details, tg_filepath = await SongCache.stream_or_fetch(cache_hit)
-                except Exception:
+                except Exception as e:
+                    print(f"[SongCache stream_or_fetch Error] {e}\n{traceback.format_exc()}")
                     tg_details, tg_filepath = None, None
 
             from_cache = bool(tg_details) and not from_cdn
@@ -439,7 +440,8 @@ async def play_commnd(
                         streamtype="tgscrap",
                         forceplay=fplay,
                     )
-                except Exception:
+                except Exception as e:
+                    print(f"[Tg-Scrap Stream Error] {e}\n{traceback.format_exc()}")
                     await mystic.edit_text(f"❌ **Error in Tg-Scrap Stream:**\n\nTry again, after sometime")
                     return
                 await mystic.delete()
