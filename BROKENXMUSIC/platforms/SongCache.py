@@ -15,6 +15,7 @@ import re
 import time
 
 import config
+from pyrogram.errors import PeerIdInvalid
 from BROKENXMUSIC import LOGGER, app
 from BROKENXMUSIC.core.mongo import mongodb
 from BROKENXMUSIC.core.userbot import assistants
@@ -31,24 +32,15 @@ async def _default_client_no():
     return assistants[0] if assistants else None
 
 
-_warmed_clients = set()
-
-
 async def _warm_peer_cache(client):
-    """Pyrogram can't resolve a bare chat/channel ID it hasn't 'seen' yet in
-    this session — it needs the peer's access_hash, which normally gets
-    cached from incoming updates. Assistants run with no_updates=True, so
-    that never happens on its own, and a fresh restart means an empty local
-    peer cache -> PEER_ID_INVALID on the very first get_chat_history /
-    get_messages call. Walking get_dialogs() once seeds the cache for every
-    chat the account is in (source channels, cache channel, all of it)."""
-    key = id(client)
-    if key in _warmed_clients:
-        return
+    """Reactive fallback only — assistants already warm their dialog cache
+    once at startup (see core/userbot.py). This just covers the edge case
+    of a channel the assistant joined *after* that startup warm-up, so a
+    get_messages/get_chat_history call can still hit PEER_ID_INVALID
+    mid-session; re-walking get_dialogs() picks up anything new."""
     try:
         async for _ in client.get_dialogs():
             pass
-        _warmed_clients.add(key)
     except Exception as e:
         logger.error(f"[SongCache] Dialog warm-up failed: {e}")
 
@@ -64,7 +56,6 @@ async def _resolve_client(client_no=None):
         try:
             client = await get_client(no)
             if client:
-                await _warm_peer_cache(client)
                 return client, no
         except Exception:
             pass
@@ -90,6 +81,15 @@ async def _refresh_file_id(client, entry):
         return None
     try:
         msg = await client.get_messages(channel_id, message_id)
+    except PeerIdInvalid:
+        # Channel joined after the assistant's startup dialog warm-up —
+        # re-warm once and retry before giving up.
+        await _warm_peer_cache(client)
+        try:
+            msg = await client.get_messages(channel_id, message_id)
+        except Exception as e:
+            logger.error(f"[SongCache] Could not refetch origin message for refresh: {e}")
+            return None
     except Exception as e:
         logger.error(f"[SongCache] Could not refetch origin message for refresh: {e}")
         return None
