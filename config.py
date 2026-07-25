@@ -18,6 +18,11 @@ MONGO_DB_URI = getenv("MONGO_DB_URI", "") # ⚠️ fill here or in .env
 
 DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 19000))
 
+# ⚠️ Tg-Scrap: auto-download+play a song via a VK Music Telegram bot before falling back to YouTube
+ENABLE_TG_SCRAP_PLAY = getenv("ENABLE_TG_SCRAP_PLAY", "True").lower() == "true"
+VK_MUSIC_BOT = getenv("VK_MUSIC_BOT", "vkmusic_bot")
+TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 45))
+
 # Chat id of a group for logging bot's activities
 LOGGER_ID = int(getenv("LOGGER_ID", -1002094142057)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
 
