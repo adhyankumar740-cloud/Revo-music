@@ -57,6 +57,27 @@ def normalize(title: str) -> str:
     return re.sub(r"\s+", " ", q).strip()
 
 
+async def _refresh_file_id(client, entry):
+    """file_id's embedded file_reference goes stale over time. Re-fetch the
+    original message (we kept channel_id/message_id for exactly this) to
+    pull a live one."""
+    channel_id = entry.get("channel_id")
+    message_id = entry.get("message_id")
+    if not channel_id or not message_id:
+        return None
+    try:
+        msg = await client.get_messages(channel_id, message_id)
+    except Exception as e:
+        logger.error(f"[SongCache] Could not refetch origin message for refresh: {e}")
+        return None
+    if not msg:
+        return None
+    audio = msg.audio or msg.voice or (
+        msg.document if (msg.document and "audio" in (msg.document.mime_type or "")) else None
+    )
+    return audio.file_id if audio else None
+
+
 class SongCacheAPI:
     def __init__(self):
         self.source_channels = config.SONG_CACHE_SOURCE_CHANNELS
@@ -98,11 +119,29 @@ class SongCacheAPI:
         filepath = os.path.join(save_dir, f"{safe_name}_{int(time.time())}.mp3")
 
         client, _ = await _resolve_client(entry.get("client_source"))
+
+        # Refresh from the origin message up front — file_reference bytes
+        # inside a stored file_id go stale over time, so don't gamble on the
+        # cached one and only find out after a failed download. One extra
+        # get_messages call here means the actual download succeeds on its
+        # first (and only) attempt.
+        file_id = await _refresh_file_id(client, entry) or entry.get("file_id")
+        if not file_id:
+            logger.error(f"[SongCache] No usable file_id for {entry.get('normalized')!r}")
+            return None, None
+
         try:
-            result = await client.download_media(entry["file_id"], file_name=filepath)
+            result = await client.download_media(file_id, file_name=filepath)
         except Exception as e:
             logger.error(f"[SongCache] fetch_file failed for {entry.get('normalized')!r}: {e}")
             return None, None
+
+        # Keep the DB entry current for anything else that reads file_id directly.
+        if file_id != entry.get("file_id"):
+            try:
+                await songcachedb.update_one({"_id": entry["_id"]}, {"$set": {"file_id": file_id}})
+            except Exception:
+                pass
 
         if not result or not os.path.exists(filepath):
             return None, None
