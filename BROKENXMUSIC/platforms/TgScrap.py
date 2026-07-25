@@ -4,7 +4,10 @@ import re
 import time
 
 import config
+from BROKENXMUSIC import LOGGER
 from BROKENXMUSIC.utils.formatters import check_duration, seconds_to_min
+
+logger = LOGGER("TgScrap")
 
 # Downloaded songs are saved here (same folder tg-scrap's own scripts use,
 # kept for consistency even though tg-scrap's Node process isn't involved
@@ -63,11 +66,15 @@ class TgScrapAPI:
         """
         assistant = self._get_assistant()
         if not assistant:
+            logger.error(f"[TgScrap] No connected assistant available for query: {query!r}")
             return None, None
+        logger.info(f"[TgScrap] Using assistant: {getattr(assistant, 'name', assistant)}")
 
         try:
             await assistant.send_message(self.bot_username, query)
-        except Exception:
+            logger.info(f"[TgScrap] Sent query to {self.bot_username}: {query!r}")
+        except Exception as e:
+            logger.error(f"[TgScrap] send_message failed: {e}")
             return None, None
 
         menu_msg = await self._wait_for(
@@ -78,11 +85,22 @@ class TgScrapAPI:
                            and getattr(m.reply_markup, "inline_keyboard", None)),
         )
         if not menu_msg:
+            logger.error(f"[TgScrap] No menu (inline keyboard) received within {self.menu_timeout}s for: {query!r}")
             return None, None
 
+        # Log the full button layout so we can see what row/col 0,0 actually is
         try:
-            await menu_msg.click(0, 0)
-        except Exception:
+            kb = menu_msg.reply_markup.inline_keyboard
+            layout = [[(b.text, b.callback_data) for b in row] for row in kb]
+            logger.info(f"[TgScrap] Menu received. Text={menu_msg.text!r} Buttons={layout}")
+        except Exception as e:
+            logger.error(f"[TgScrap] Could not read button layout: {e}")
+
+        try:
+            click_result = await menu_msg.click(0, 0)
+            logger.info(f"[TgScrap] Clicked (0,0). Result: {click_result!r}")
+        except Exception as e:
+            logger.error(f"[TgScrap] click(0,0) raised: {e}")
             return None, None
 
         audio_msg = await self._wait_for(
@@ -92,7 +110,15 @@ class TgScrapAPI:
             lambda m: bool(m.audio or m.voice or (m.document and "audio" in (m.document.mime_type or ""))),
         )
         if not audio_msg:
+            logger.error(f"[TgScrap] No audio received within {self.audio_timeout}s after click, for: {query!r}")
+            # Peek at whatever DID arrive after the click, to see if it looped back to a menu/search prompt
+            try:
+                async for m in assistant.get_chat_history(self.bot_username, limit=3):
+                    logger.info(f"[TgScrap] Recent msg after click -> text={m.text!r} has_menu={bool(getattr(m, 'reply_markup', None))} has_audio={bool(m.audio)}")
+            except Exception:
+                pass
             return None, None
+        logger.info(f"[TgScrap] Audio message received for: {query!r}")
 
         os.makedirs(TG_SCRAP_DOWNLOADS, exist_ok=True)
         safe_name = re.sub(r"[^a-z0-9]+", "_", query.lower()).strip("_") or "track"
