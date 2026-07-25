@@ -17,11 +17,35 @@ import time
 import config
 from BROKENXMUSIC import LOGGER, app
 from BROKENXMUSIC.core.mongo import mongodb
+from BROKENXMUSIC.core.userbot import assistants
+from BROKENXMUSIC.utils.database import get_client
 from BROKENXMUSIC.utils.formatters import seconds_to_min
 
 logger = LOGGER("SongCache")
 
 songcachedb = mongodb.songcache
+
+
+async def _default_client_no():
+    """First running assistant number, or None if only the bot is available."""
+    return assistants[0] if assistants else None
+
+
+async def _resolve_client(client_no=None):
+    """Client that should own the source/cache channels. Assistants (real
+    user accounts) commonly sit in channels the bot itself was never added
+    to, so prefer them. `client_no` pins a lookup to whichever account
+    actually produced a given file_id; leave it None to just grab whatever
+    assistant is currently running."""
+    no = client_no if client_no is not None else await _default_client_no()
+    if no is not None:
+        try:
+            client = await get_client(no)
+            if client:
+                return client, no
+        except Exception:
+            pass
+    return app, None
 
 
 def normalize(title: str) -> str:
@@ -73,8 +97,9 @@ class SongCacheAPI:
         safe_name = re.sub(r"[^a-z0-9]+", "_", entry.get("normalized", "track")).strip("_") or "track"
         filepath = os.path.join(save_dir, f"{safe_name}_{int(time.time())}.mp3")
 
+        client, _ = await _resolve_client(entry.get("client_source"))
         try:
-            result = await app.download_media(entry["file_id"], file_name=filepath)
+            result = await client.download_media(entry["file_id"], file_name=filepath)
         except Exception as e:
             logger.error(f"[SongCache] fetch_file failed for {entry.get('normalized')!r}: {e}")
             return None, None
@@ -98,8 +123,9 @@ class SongCacheAPI:
         if not norm:
             return False
 
+        client, client_no = await _resolve_client()
         try:
-            msg = await app.send_audio(
+            msg = await client.send_audio(
                 self.cache_channel,
                 local_filepath,
                 title=title,
@@ -124,6 +150,7 @@ class SongCacheAPI:
                         "file_id": file_id,
                         "channel_id": self.cache_channel,
                         "message_id": msg.id,
+                        "client_source": client_no,
                         "added_at": time.time(),
                     }
                 },
@@ -144,11 +171,19 @@ class SongCacheAPI:
             logger.error("[SongCache] No SONG_CACHE_SOURCE_CHANNELS configured.")
             return 0
 
+        client, client_no = await _resolve_client()
+        if client is app:
+            logger.error(
+                "[SongCache] No assistant is running — indexing with the bot account. "
+                "If the bot isn't a member of your source channels this will index 0 tracks; "
+                "add an assistant (STRING1..5) to those channels instead, or add the bot itself."
+            )
+
         total_indexed = 0
         for channel in self.source_channels:
             channel_count = 0
             try:
-                async for msg in app.get_chat_history(channel, limit=limit_per_channel):
+                async for msg in client.get_chat_history(channel, limit=limit_per_channel):
                     audio = msg.audio or msg.voice or (
                         msg.document if (msg.document and "audio" in (msg.document.mime_type or "")) else None
                     )
@@ -187,6 +222,7 @@ class SongCacheAPI:
                                     "file_id": audio.file_id,
                                     "channel_id": channel,
                                     "message_id": msg.id,
+                                    "client_source": client_no,
                                     "added_at": time.time(),
                                 }
                             },
