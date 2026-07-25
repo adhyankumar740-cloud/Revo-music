@@ -50,10 +50,11 @@ async def play_commnd(
     playmode,
     url,
     fplay,
+    mystic,
 ):
-    mystic = await message.reply_text(
-        _["play_2"].format(channel) if channel else random.choice(AYU)
-    )
+    # `mystic` is sent by PlayWrapper the instant the command comes in —
+    # before any DB lookups — so the user sees a response as fast as
+    # possible instead of waiting on this function to even start.
     plist_id = None
     slider = None
     plist_type = None
