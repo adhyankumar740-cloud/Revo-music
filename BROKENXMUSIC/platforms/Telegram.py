@@ -6,13 +6,15 @@ from typing import Union
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Voice
 
 import config
-from BROKENXMUSIC import app
+from BROKENXMUSIC import LOGGER, app
 from BROKENXMUSIC.utils.formatters import (
     check_duration,
     convert_bytes,
     get_readable_time,
     seconds_to_min,
 )
+
+logger = LOGGER("Telegram")
 
 
 class TeleAPI:
@@ -150,9 +152,23 @@ class TeleAPI:
                                 pass
 
             speed_counter[message.id] = time.time()
+            target = message.reply_to_message
+            # file_reference bytes embedded in a Message go stale over
+            # time — most noticeable when someone replies to an old
+            # forwarded/archived audio. Re-fetch it fresh right before
+            # downloading instead of gambling on whatever reference the
+            # reply_to_message object happened to carry.
+            try:
+                fresh = await app.get_messages(
+                    message.chat.id, message.reply_to_message.id
+                )
+                if fresh:
+                    target = fresh
+            except Exception as e:
+                logger.error(f"[Telegram] Could not refresh replied-to message: {e}")
             try:
                 await app.download_media(
-                    message.reply_to_message,
+                    target,
                     file_name=fname,
                     progress=progress,
                 )
@@ -163,7 +179,8 @@ class TeleAPI:
                 except:
                     elapsed = "0 sᴇᴄᴏɴᴅs"
                 await mystic.edit_text(_["tg_2"].format(elapsed))
-            except:
+            except Exception as e:
+                logger.error(f"[Telegram] download_media failed: {e}")
                 await mystic.edit_text(_["tg_3"])
 
         task = asyncio.create_task(down_load())
