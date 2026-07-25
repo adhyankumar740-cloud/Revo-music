@@ -241,23 +241,33 @@ class SongCacheAPI:
                 "add an assistant (STRING1..5) to those channels instead, or add the bot itself."
             )
 
+        # 0 = explicit "no limit" (old behaviour). None = use the configured
+        # default cap so one run can't silently churn through an entire huge
+        # channel's history (and rack up long, hard-to-notice FloodWaits).
+        if limit_per_channel is None:
+            limit_per_channel = config.SONG_CACHE_INDEX_LIMIT
+
         total_indexed = 0
         for channel in self.source_channels:
             channel_count = 0
             seen = 0
             started_at = time.time()
-            logger.info(f"[SongCache] Starting scan of {channel} ...")
+            last_heartbeat = started_at
+            logger.info(
+                f"[SongCache] Starting scan of {channel} "
+                f"(limit={limit_per_channel or 'none'}) ..."
+            )
             try:
-                # limit=0 means "no limit" to Pyrogram; explicit None isn't the
-                # documented way to say that, so normalize it here.
                 async for msg in client.get_chat_history(channel, limit=limit_per_channel or 0):
                     seen += 1
-                    if seen % 200 == 0:
-                        elapsed = int(time.time() - started_at)
+                    now = time.time()
+                    if seen % 200 == 0 or (now - last_heartbeat) >= 30:
+                        elapsed = int(now - started_at)
                         logger.info(
                             f"[SongCache] ...{channel}: scanned {seen} messages so far "
                             f"({channel_count} audio indexed, {elapsed}s elapsed)"
                         )
+                        last_heartbeat = now
 
                     audio = msg.audio or msg.voice or (
                         msg.document if (msg.document and "audio" in (msg.document.mime_type or "")) else None
