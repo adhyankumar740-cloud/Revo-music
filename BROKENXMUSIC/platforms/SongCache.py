@@ -245,6 +245,36 @@ class SongCacheAPI:
         if not result or not os.path.exists(filepath):
             return None, None
 
+        # The file_id can refresh cleanly while the underlying message's
+        # audio is itself gone/corrupt (e.g. the cache-channel message was
+        # deleted or never had real audio). A near-empty file downloads
+        # "successfully" but pytgcalls/ffmpeg will reject it with
+        # NoAudioSourceFound. Catch that here instead of handing a dead
+        # file to the voice chat.
+        MIN_VALID_AUDIO_BYTES = 8192
+        try:
+            size = os.path.getsize(filepath)
+        except OSError:
+            size = 0
+        if size < MIN_VALID_AUDIO_BYTES:
+            logger.error(
+                f"[SongCache] Downloaded file for {entry.get('normalized')!r} "
+                f"is only {size} bytes — treating as corrupt, purging cache entry."
+            )
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            try:
+                await songcachedb.delete_one({"_id": entry["_id"]})
+                logger.info(
+                    f"[SongCache] Removed corrupt entry "
+                    f"{entry.get('normalized')!r} from cache index."
+                )
+            except Exception:
+                pass
+            return None, None
+
         track_details = {
             "title": entry.get("title") or entry.get("normalized", "").title(),
             "duration_min": entry.get("duration_min") or "Unknown",
