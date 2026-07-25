@@ -22,7 +22,6 @@ import random
 import logging
 import aiohttp
 from BROKENXMUSIC import LOGGER
-from urllib.parse import urlparse
 
 
 try:
@@ -31,58 +30,37 @@ except ImportError:
     class config:
         YOUTUBE_IMG_URL = "https://telegra.ph/file/8ba38eca9318beb6dcede.jpg"
 
-from brokenxapi import BrokenXAPI
+# Local (sibling) import — safe at module load time, unlike importing the
+# already-instantiated `TgScrap` object from the BROKENXMUSIC package,
+# which doesn't exist yet while platforms/__init__ is still loading.
+from .TgScrap import TgScrapAPI
 
-API_KEY = os.getenv("API_KEY", "PUT_YOUR_BROKENXAPI_KEY_HERE") #GET THIS FROM TG: https://t.me/BROKENXNETWORK1 or https://t.me/AboutBrokenX
+_tgscrap = TgScrapAPI()
 
 
-async def get_telegram_file(telegram_url: str, video_id: str, file_type: str) -> str:
-    logger = LOGGER("BrokenAPI/Youtube.py")
+def _extract_video_id(link: str) -> str:
+    return link.split("v=")[-1].split("&")[0] if "v=" in link else link
+
+
+async def _get_title(video_id: str) -> str:
+    """Best-effort title lookup, used only to build a search query for TgScrap."""
     try:
-        extension = ".m4a" if file_type == "audio" else ".mp4"
-        file_path = os.path.join("downloads", f"{video_id}{extension}")
-
-        if os.path.exists(file_path):
-            logger.info(f"📂 [LOCAL] File exists: {video_id}")
-            return file_path
-
-        parsed = urlparse(telegram_url)
-        parts = parsed.path.strip("/").split("/")
-
-        if len(parts) < 2:
-            logger.error(f"❌ Invalid Telegram link format: {telegram_url}")
-            return None
-
-        channel_name = parts[0]
-        message_id = int(parts[1])
-
-        
-
-        msg = await app.get_messages(channel_name, message_id)
-
-        os.makedirs("downloads", exist_ok=True)
-        await msg.download(file_name=file_path)
-
-        timeout = 0
-        while not os.path.exists(file_path) and timeout < 60:
-            await asyncio.sleep(0.5)
-            timeout += 0.5
-
-        if os.path.exists(file_path):
-            logger.info(f"✅ [TELEGRAM] Downloaded: {video_id}")
-            return file_path
-        else:
-            logger.error(f"❌ [TELEGRAM] Timeout: {video_id}")
-            return None
-
-    except Exception as e:
-        logger.error(f"❌ [TELEGRAM] Failed to download {video_id}: {e}")
-        return None
+        results = YoutubeSearch(f"https://www.youtube.com/watch?v={video_id}", max_results=1).to_dict()
+        if results:
+            return results[0].get("title") or video_id
+    except Exception:
+        pass
+    return video_id
 
 
 async def download_song(link: str) -> str:
-    video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
-    logger = LOGGER("BrokenXAPI")
+    """
+    Audio downloads now go through the Tg-Scrap system (VK-Music-style
+    Telegram bot, driven by our own userbot) instead of the old BrokenXAPI
+    service.
+    """
+    video_id = _extract_video_id(link)
+    logger = LOGGER("TgScrap/Youtube.py")
     logger.info(f"🎵 [AUDIO] Starting download for: {video_id}")
 
     if not video_id or len(video_id) < 3:
@@ -90,32 +68,30 @@ async def download_song(link: str) -> str:
         return None
 
     os.makedirs("downloads", exist_ok=True)
-    file_path = os.path.join("downloads", f"{video_id}.webm")
 
-    if os.path.exists(file_path):
-        logger.info(f"🎵 [LOCAL] File exists: {video_id}")
-        return file_path
+    title = await _get_title(video_id)
 
     try:
-        async with BrokenXAPI(api_key=API_KEY) as api:
-            data = await api.download(video_id, "audio")
-
-        logger.info(f"🔍 [AUDIO] RAW BrokenXAPI RESPONSE: {data}")
-
-        if not data or "telegram_url" not in data:
-            logger.error(f"❌ [AUDIO] Invalid SDK response: {data}")
-            return None
-
-        return await get_telegram_file(data["telegram_url"], video_id, "audio")
-
+        track_details, filepath = await _tgscrap.download(title)
     except Exception as e:
-        logger.error(f"❌ [AUDIO] Exception: {e}")
+        logger.error(f"❌ [AUDIO] TgScrap exception: {e}")
         return None
+
+    if not filepath or not os.path.exists(filepath):
+        logger.error(f"❌ [AUDIO] TgScrap failed for: {title}")
+        return None
+
+    logger.info(f"✅ [AUDIO] TgScrap download complete: {title}")
+    return filepath
 
 
 async def download_video(link: str) -> str:
-    video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
-    logger = LOGGER("BrokenXAPI")
+    """
+    Tg-Scrap (VK Music bot) only serves audio, so video downloads still
+    go through yt-dlp directly (plain, no cookies configured).
+    """
+    video_id = _extract_video_id(link)
+    logger = LOGGER("YtDlp/Youtube.py")
     logger.info(f"🎥 [VIDEO] Starting download for: {video_id}")
 
     if not video_id or len(video_id) < 3:
@@ -123,21 +99,37 @@ async def download_video(link: str) -> str:
         return None
 
     os.makedirs("downloads", exist_ok=True)
-    file_path = os.path.join("downloads", f"{video_id}.mkv")
+    file_path = os.path.join("downloads", f"{video_id}.mp4")
 
     if os.path.exists(file_path):
         logger.info(f"🎥 [LOCAL] File exists: {video_id}")
         return file_path
 
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    ytdl_opts = {
+        "format": "bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4]/best",
+        "outtmpl": file_path.replace(".mp4", ".%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "merge_output_format": "mp4",
+        "noplaylist": True,
+    }
+
     try:
-        async with BrokenXAPI(api_key=API_KEY) as api:
-            data = await api.download(video_id, "video")
+        loop = asyncio.get_event_loop()
 
-        if not data or "telegram_url" not in data:
-            logger.error(f"❌ [VIDEO] Invalid SDK response: {data}")
-            return None
+        def _run():
+            with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
+                ydl.download([url])
 
-        return await get_telegram_file(data["telegram_url"], video_id, "video")
+        await loop.run_in_executor(None, _run)
+
+        if os.path.exists(file_path):
+            logger.info(f"✅ [VIDEO] yt-dlp download complete: {video_id}")
+            return file_path
+
+        logger.error(f"❌ [VIDEO] File not found after download: {video_id}")
+        return None
 
     except Exception as e:
         logger.error(f"❌ [VIDEO] Exception: {e}")
@@ -312,7 +304,7 @@ class YouTubeAPI:
 
     # --- UPDATED TRACK METHOD USING youtube_search ---
     async def track(self, link: str, videoid: Union[bool, str] = None):
-        logger = LOGGER("BrokenXAPI") 
+        logger = LOGGER("YoutubeSearch/Youtube.py") 
         try:
             if videoid:
                 link = self.base + link
