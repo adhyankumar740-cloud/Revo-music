@@ -28,14 +28,29 @@ TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 30))  # wait for the audio fil
 # Comma separated list of usernames / numeric chat ids, e.g.
 # "mymusicarchive,-1001234567890,another_channel"
 # These are searched FIRST before ever touching the VK Music bot.
+def _normalize_channel(c):
+    c = c.strip()
+    try:
+        return int(c)  # numeric channel ids (e.g. -1001234567890) need to be int
+    except ValueError:
+        return c  # usernames stay as strings
+
 SONG_CACHE_SOURCE_CHANNELS = [
-    c.strip() for c in getenv("SONG_CACHE_SOURCE_CHANNELS", "").split(",") if c.strip()
+    _normalize_channel(c) for c in getenv("SONG_CACHE_SOURCE_CHANNELS", "").split(",") if c.strip()
 ]
 OWN_CHANNEL_SEARCH_LIMIT = int(getenv("OWN_CHANNEL_SEARCH_LIMIT", 5))
 # Warm-up index: how long (in hours) a cached index of SONG_CACHE_SOURCE_CHANNELS
 # is considered fresh before it's rebuilt. 0 = never auto-refresh (only rebuilds
 # if the cache file is missing or you call warm_up(force_refresh=True)).
 MY_MUSIC_INDEX_TTL_HOURS = int(getenv("MY_MUSIC_INDEX_TTL_HOURS", 24))
+
+# Song Cache: turns your source channels + this single auto-growing channel
+# into a fast MongoDB-indexed local library (see BROKENXMUSIC/platforms/SongCache.py).
+# Every song freshly pulled via TgScrap gets uploaded here and indexed, so the
+# next request for it is an instant file_id-based hit — no re-download.
+ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "True").lower() == "true"
+_raw_song_cache_channel = getenv("SONG_CACHE_CHANNEL", "").strip()
+SONG_CACHE_CHANNEL = _normalize_channel(_raw_song_cache_channel) if _raw_song_cache_channel else None
 
 # Chat id of a group for logging bot's activities
 LOGGER_ID = int(getenv("LOGGER_ID", -1002094142057)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
