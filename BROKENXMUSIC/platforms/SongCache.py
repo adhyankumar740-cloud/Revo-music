@@ -25,6 +25,7 @@ from BROKENXMUSIC.utils.formatters import seconds_to_min
 logger = LOGGER("SongCache")
 
 songcachedb = mongodb.songcache
+songcache_progressdb = mongodb.songcache_progress
 
 
 async def _default_client_no():
@@ -253,13 +254,33 @@ class SongCacheAPI:
             seen = 0
             started_at = time.time()
             last_heartbeat = started_at
+            oldest_id_seen = None
+
+            # Resume from where the previous run left off (older messages),
+            # instead of always re-scanning the newest N messages again.
+            progress = await songcache_progressdb.find_one({"channel": str(channel)})
+            offset_id = (progress or {}).get("last_message_id", 0)
+            done_before = bool((progress or {}).get("done"))
+
+            if done_before:
+                logger.info(
+                    f"[SongCache] {channel}: already fully scanned in a "
+                    f"previous run, skipping. Delete its songcache_progress "
+                    f"entry to rescan from the top."
+                )
+                continue
+
             logger.info(
                 f"[SongCache] Starting scan of {channel} "
-                f"(limit={limit_per_channel or 'none'}) ..."
+                f"(limit={limit_per_channel or 'none'}, resuming before "
+                f"message_id={offset_id or 'latest'}) ..."
             )
             try:
-                async for msg in client.get_chat_history(channel, limit=limit_per_channel or 0):
+                async for msg in client.get_chat_history(
+                    channel, limit=limit_per_channel or 0, offset_id=offset_id
+                ):
                     seen += 1
+                    oldest_id_seen = msg.id
                     now = time.time()
                     if seen % 200 == 0 or (now - last_heartbeat) >= 30:
                         elapsed = int(now - started_at)
@@ -320,9 +341,37 @@ class SongCacheAPI:
                 logger.error(f"[SongCache] Failed indexing channel {channel}: {e}")
                 continue
 
+            # Figure out whether we reached the actual end of the channel's
+            # history (fewer messages returned than we asked for -> nothing
+            # older is left) vs just hit our per-run limit_per_channel cap.
+            reached_end = bool(limit_per_channel) and seen < limit_per_channel
+            try:
+                if reached_end or not limit_per_channel:
+                    await songcache_progressdb.update_one(
+                        {"channel": str(channel)},
+                        {"$set": {"channel": str(channel), "done": True, "updated_at": time.time()}},
+                        upsert=True,
+                    )
+                elif oldest_id_seen:
+                    await songcache_progressdb.update_one(
+                        {"channel": str(channel)},
+                        {
+                            "$set": {
+                                "channel": str(channel),
+                                "last_message_id": oldest_id_seen,
+                                "done": False,
+                                "updated_at": time.time(),
+                            }
+                        },
+                        upsert=True,
+                    )
+            except Exception as e:
+                logger.error(f"[SongCache] Could not save scan progress for {channel}: {e}")
+
             logger.info(
                 f"[SongCache] Indexed {channel_count} tracks from {channel} "
-                f"({seen} messages scanned, {int(time.time() - started_at)}s)"
+                f"({seen} messages scanned, {int(time.time() - started_at)}s"
+                f"{', reached end of channel history' if reached_end or not limit_per_channel else ''})"
             )
             total_indexed += channel_count
 
