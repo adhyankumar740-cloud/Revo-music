@@ -47,6 +47,12 @@ ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "True").lower() == "true"
 _raw_song_cache_channel = getenv("SONG_CACHE_CHANNEL", "").strip()
 SONG_CACHE_CHANNEL = _normalize_channel(_raw_song_cache_channel) if _raw_song_cache_channel else None
 
+# Default cap on how many messages /indexcache scans per channel per run.
+# Scanning a huge channel's *entire* history in one unlimited pass is what
+# was triggering long, invisible FloodWait sleeps. 0 = no limit (old
+# behaviour) — override per-run with "/indexcache <number>".
+SONG_CACHE_INDEX_LIMIT = int(getenv("SONG_CACHE_INDEX_LIMIT", 1000))
+
 # Chat id of a group for logging bot's activities
 LOGGER_ID = int(getenv("LOGGER_ID", -1002094142057)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
 
