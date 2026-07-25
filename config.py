@@ -22,16 +22,20 @@ DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 19000))
 ENABLE_TG_SCRAP_PLAY = getenv("ENABLE_TG_SCRAP_PLAY", "True").lower() == "true"
 VK_MUSIC_BOT = getenv("VK_MUSIC_BOT", "vkmusic_bot")
 TG_SCRAP_MENU_TIMEOUT = int(getenv("TG_SCRAP_MENU_TIMEOUT", 15))  # wait for the bot's results menu
-TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 45))  # wait for the audio file after clicking
+TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 30))  # wait for the audio file after clicking
 
-# ⚠️ Song Cache: channels containing songs, checked BEFORE hitting vkmusic_bot.
-# Comma-separated channel ids/usernames, e.g. "-1001111111111,-1002222222222,@mychannel"
+# ⚠️ Your own archived channels (the ones you've been building up for years).
+# Comma separated list of usernames / numeric chat ids, e.g.
+# "mymusicarchive,-1001234567890,another_channel"
+# These are searched FIRST before ever touching the VK Music bot.
 SONG_CACHE_SOURCE_CHANNELS = [
     c.strip() for c in getenv("SONG_CACHE_SOURCE_CHANNELS", "").split(",") if c.strip()
 ]
-# Where freshly-downloaded (vkmusic_bot) songs get uploaded to grow the cache over time.
-SONG_CACHE_CHANNEL = getenv("SONG_CACHE_CHANNEL", "")
-ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "True").lower() == "true"
+OWN_CHANNEL_SEARCH_LIMIT = int(getenv("OWN_CHANNEL_SEARCH_LIMIT", 5))
+# Warm-up index: how long (in hours) a cached index of SONG_CACHE_SOURCE_CHANNELS
+# is considered fresh before it's rebuilt. 0 = never auto-refresh (only rebuilds
+# if the cache file is missing or you call warm_up(force_refresh=True)).
+MY_MUSIC_INDEX_TTL_HOURS = int(getenv("MY_MUSIC_INDEX_TTL_HOURS", 24))
 
 # Chat id of a group for logging bot's activities
 LOGGER_ID = int(getenv("LOGGER_ID", -1002094142057)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
