@@ -31,6 +31,28 @@ async def _default_client_no():
     return assistants[0] if assistants else None
 
 
+_warmed_clients = set()
+
+
+async def _warm_peer_cache(client):
+    """Pyrogram can't resolve a bare chat/channel ID it hasn't 'seen' yet in
+    this session — it needs the peer's access_hash, which normally gets
+    cached from incoming updates. Assistants run with no_updates=True, so
+    that never happens on its own, and a fresh restart means an empty local
+    peer cache -> PEER_ID_INVALID on the very first get_chat_history /
+    get_messages call. Walking get_dialogs() once seeds the cache for every
+    chat the account is in (source channels, cache channel, all of it)."""
+    key = id(client)
+    if key in _warmed_clients:
+        return
+    try:
+        async for _ in client.get_dialogs():
+            pass
+        _warmed_clients.add(key)
+    except Exception as e:
+        logger.error(f"[SongCache] Dialog warm-up failed: {e}")
+
+
 async def _resolve_client(client_no=None):
     """Client that should own the source/cache channels. Assistants (real
     user accounts) commonly sit in channels the bot itself was never added
@@ -42,6 +64,7 @@ async def _resolve_client(client_no=None):
         try:
             client = await get_client(no)
             if client:
+                await _warm_peer_cache(client)
                 return client, no
         except Exception:
             pass
