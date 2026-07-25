@@ -32,6 +32,10 @@ class TgScrapAPI:
         self.bot_username = config.VK_MUSIC_BOT
         self.menu_timeout = config.TG_SCRAP_MENU_TIMEOUT
         self.audio_timeout = config.TG_SCRAP_TIMEOUT
+        # How many nested inline-keyboard menus to click through (top
+        # option each time) before giving up. 1 = old single-click
+        # behaviour. Some bots need 2-3 (track list -> quality/format).
+        self.max_menu_hops = getattr(config, "TG_SCRAP_MAX_MENU_HOPS", 3)
 
     def _get_assistant(self):
         # Local import to avoid circular imports at module load time.
@@ -94,22 +98,62 @@ class TgScrapAPI:
             )
             return None, None
 
-        try:
-            await menu_msg.click(0, 0)
-        except Exception as e:
-            logger.error(f"[TgScrap] Could not click result menu for {query!r}: {e}")
-            return None, None
-
-        audio_msg = await self._wait_for(
+        menu_msg = await self._wait_for(
             assistant,
             self.bot_username,
-            self.audio_timeout,
-            lambda m: bool(m.audio or m.voice or (m.document and "audio" in (m.document.mime_type or ""))),
+            self.menu_timeout,
+            lambda m: bool(getattr(m, "reply_markup", None)
+                           and getattr(m.reply_markup, "inline_keyboard", None)),
         )
+        if not menu_msg:
+            logger.error(
+                f"[TgScrap] {self.bot_username} gave no results menu for {query!r} "
+                f"within {self.menu_timeout}s"
+            )
+            return None, None
+
+        # Some bots (e.g. Shazam-style finders) don't hand over audio after
+        # one click — they show a track list, then a second menu (pick
+        # format/quality), sometimes more. Keep clicking the top option of
+        # whatever inline keyboard shows up next, until actual audio
+        # arrives or we run out of menu hops / time.
+        audio_msg = None
+        current_menu = menu_msg
+        for hop in range(self.max_menu_hops):
+            try:
+                await current_menu.click(0, 0)
+            except Exception as e:
+                logger.error(
+                    f"[TgScrap] Could not click menu (hop {hop + 1}) for {query!r}: {e}"
+                )
+                return None, None
+
+            next_msg = await self._wait_for(
+                assistant,
+                self.bot_username,
+                self.audio_timeout,
+                lambda m: bool(
+                    m.audio or m.voice
+                    or (m.document and "audio" in (m.document.mime_type or ""))
+                    or (getattr(m, "reply_markup", None) and getattr(m.reply_markup, "inline_keyboard", None))
+                ),
+            )
+            if not next_msg:
+                break
+
+            if next_msg.audio or next_msg.voice or (
+                next_msg.document and "audio" in (next_msg.document.mime_type or "")
+            ):
+                audio_msg = next_msg
+                break
+
+            # It's another menu — go one hop deeper.
+            current_menu = next_msg
+
         if not audio_msg:
             logger.error(
                 f"[TgScrap] No audio received from {self.bot_username} for {query!r} "
-                f"within {self.audio_timeout}s"
+                f"after {self.max_menu_hops} menu hop(s), within {self.audio_timeout}s each"
             )
             return None, None
 
