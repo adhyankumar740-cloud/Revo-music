@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import aiofiles
 import aiohttp
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
@@ -7,6 +8,15 @@ from unidecode import unidecode
 from youtube_search import YoutubeSearch
 from BROKENXMUSIC import app
 from config import YOUTUBE_IMG_URL
+
+# Fonts were being re-read from disk (TTF parsed from scratch) on every
+# single thumbnail generation. Load them once at import time and reuse the
+# same font objects everywhere — cheap, and shaves real disk I/O + parsing
+# time off every /play.
+_FONT_WM = ImageFont.truetype("BROKENXMUSIC/assets/font.ttf", 20)
+_FONT_ARIAL = ImageFont.truetype("BROKENXMUSIC/assets/font2.ttf", 30)
+_FONT_BODY = ImageFont.truetype("BROKENXMUSIC/assets/font.ttf", 30)
+_FONT_TITLE = ImageFont.truetype("BROKENXMUSIC/assets/font3.ttf", 45)
 
 def changeImageSize(maxWidth, maxHeight, image):
     widthRatio = maxWidth / image.size[0]
@@ -66,9 +76,15 @@ async def get_thumb(videoid):
         return f"cache/{videoid}_v4.png"
 
     url = f"https://www.youtube.com/watch?v={videoid}"
-    
+    loop = asyncio.get_event_loop()
+
     try:
-        results = YoutubeSearch(url, max_results=1).to_dict()
+        # YoutubeSearch does blocking HTTP under the hood — never call it
+        # directly in an async function (freezes the whole bot). Dispatch
+        # to a thread like everywhere else.
+        results = await loop.run_in_executor(
+            None, lambda: YoutubeSearch(url, max_results=1).to_dict()
+        )
         if results:
             result = results[0]
             
@@ -107,94 +123,88 @@ async def get_thumb(videoid):
                 await f.close()
 
     try:
-        
-        youtube = Image.open(f"cache/thumb{videoid}.png")
-        image1 = changeImageSize(1280, 720, youtube)
-        image2 = image1.convert("RGBA")
-        
-        background = image2.filter(filter=ImageFilter.BoxBlur(20))
-        enhancer = ImageEnhance.Brightness(background)
-        background = enhancer.enhance(0.6)
-        
-        
-        try:
-            wm_text = "Powered By Broken X Network"
-            
-            wm_font = ImageFont.truetype("BROKENXMUSIC/assets/font.ttf", 20)
-            
-            
-            wm_layer = Image.new('RGBA', background.size, (255, 255, 255, 0))
-            wm_draw = ImageDraw.Draw(wm_layer)
-            
-            try:
-                wm_len = wm_draw.textlength(wm_text, font=wm_font)
-            except:
-                wm_len = 300 
-            
-            
-            wm_draw.text((1280 - wm_len - 30, 30), wm_text, fill=(255, 255, 255, 150), font=wm_font)
-            
-            
-            background = Image.alpha_composite(background, wm_layer)
-            
-        except Exception as wm_e:
-            print(f"Watermark Error: {wm_e}")
-        
-
-        
-        draw = ImageDraw.Draw(background)
-        
-        arial = ImageFont.truetype("BROKENXMUSIC/assets/font2.ttf", 30)
-        font = ImageFont.truetype("BROKENXMUSIC/assets/font.ttf", 30)
-        title_font = ImageFont.truetype("BROKENXMUSIC/assets/font3.ttf", 45)
-
-        circle_thumbnail = crop_center_circle(youtube, 400, 20)
-        circle_thumbnail = circle_thumbnail.resize((400, 400))
-        circle_position = (120, 160)
-        background.paste(circle_thumbnail, circle_position, circle_thumbnail)
-
-        text_x_position = 565
-
-        title1 = truncate(title)
-        draw.text((text_x_position, 180), title1[0], fill=(255, 255, 255), font=title_font)
-        draw.text((text_x_position, 230), title1[1], fill=(255, 255, 255), font=title_font)
-        draw.text((text_x_position, 320), f"{channel}  |  {views[:23]}", (255, 255, 255), font=arial)
-
-        line_length = 580  
-        red_length = int(line_length * 0.6)
-        white_length = line_length - red_length
-
-        start_point_red = (text_x_position, 380)
-        end_point_red = (text_x_position + red_length, 380)
-        draw.line([start_point_red, end_point_red], fill="red", width=9)
-
-        start_point_white = (text_x_position + red_length, 380)
-        end_point_white = (text_x_position + line_length, 380)
-        draw.line([start_point_white, end_point_white], fill="white", width=8)
-
-        circle_radius = 10 
-        circle_position = (end_point_red[0], end_point_red[1])
-        draw.ellipse([circle_position[0] - circle_radius, circle_position[1] - circle_radius,
-                    circle_position[0] + circle_radius, circle_position[1] + circle_radius], fill="red")
-        
-        draw.text((text_x_position, 400), "00:00", (255, 255, 255), font=arial)
-        draw.text((1080, 400), duration, (255, 255, 255), font=arial)
-
-        try:
-            play_icons = Image.open("BROKENXMUSIC/assets/play_icons.png")
-            play_icons = play_icons.resize((580, 62))
-            background.paste(play_icons, (text_x_position, 450), play_icons)
-        except Exception as e:
-            print(f"Icon Error: {e}")
-
-        try:
-            os.remove(f"cache/thumb{videoid}.png")
-        except:
-            pass
-            
-        background.save(f"cache/{videoid}_v4.png")
-        return f"cache/{videoid}_v4.png"
-        
+        background = await loop.run_in_executor(
+            None, _render_thumbnail, videoid, title, duration, views, channel
+        )
+        return background
     except Exception as e:
         print(f"Error creating thumbnail: {e}")
         return YOUTUBE_IMG_URL
+
+
+def _render_thumbnail(videoid, title, duration, views, channel):
+    """CPU-heavy Pillow work (blur filter, compositing, font rendering on a
+    1280x720 canvas) — this used to run straight in the async function and
+    block the whole bot's event loop for its duration on every uncached
+    thumbnail. Now called via run_in_executor so it runs in a worker thread
+    instead."""
+    youtube = Image.open(f"cache/thumb{videoid}.png")
+    image1 = changeImageSize(1280, 720, youtube)
+    image2 = image1.convert("RGBA")
+
+    background = image2.filter(filter=ImageFilter.BoxBlur(20))
+    enhancer = ImageEnhance.Brightness(background)
+    background = enhancer.enhance(0.6)
+
+    try:
+        wm_text = "Powered By Broken X Network"
+        wm_layer = Image.new('RGBA', background.size, (255, 255, 255, 0))
+        wm_draw = ImageDraw.Draw(wm_layer)
+
+        try:
+            wm_len = wm_draw.textlength(wm_text, font=_FONT_WM)
+        except:
+            wm_len = 300
+
+        wm_draw.text((1280 - wm_len - 30, 30), wm_text, fill=(255, 255, 255, 150), font=_FONT_WM)
+        background = Image.alpha_composite(background, wm_layer)
+    except Exception as wm_e:
+        print(f"Watermark Error: {wm_e}")
+
+    draw = ImageDraw.Draw(background)
+
+    circle_thumbnail = crop_center_circle(youtube, 400, 20)
+    circle_thumbnail = circle_thumbnail.resize((400, 400))
+    circle_position = (120, 160)
+    background.paste(circle_thumbnail, circle_position, circle_thumbnail)
+
+    text_x_position = 565
+
+    title1 = truncate(title)
+    draw.text((text_x_position, 180), title1[0], fill=(255, 255, 255), font=_FONT_TITLE)
+    draw.text((text_x_position, 230), title1[1], fill=(255, 255, 255), font=_FONT_TITLE)
+    draw.text((text_x_position, 320), f"{channel}  |  {views[:23]}", (255, 255, 255), font=_FONT_ARIAL)
+
+    line_length = 580
+    red_length = int(line_length * 0.6)
+
+    start_point_red = (text_x_position, 380)
+    end_point_red = (text_x_position + red_length, 380)
+    draw.line([start_point_red, end_point_red], fill="red", width=9)
+
+    start_point_white = (text_x_position + red_length, 380)
+    end_point_white = (text_x_position + line_length, 380)
+    draw.line([start_point_white, end_point_white], fill="white", width=8)
+
+    circle_radius = 10
+    circle_position = (end_point_red[0], end_point_red[1])
+    draw.ellipse([circle_position[0] - circle_radius, circle_position[1] - circle_radius,
+                circle_position[0] + circle_radius, circle_position[1] + circle_radius], fill="red")
+
+    draw.text((text_x_position, 400), "00:00", (255, 255, 255), font=_FONT_ARIAL)
+    draw.text((1080, 400), duration, (255, 255, 255), font=_FONT_ARIAL)
+
+    try:
+        play_icons = Image.open("BROKENXMUSIC/assets/play_icons.png")
+        play_icons = play_icons.resize((580, 62))
+        background.paste(play_icons, (text_x_position, 450), play_icons)
+    except Exception as e:
+        print(f"Icon Error: {e}")
+
+    try:
+        os.remove(f"cache/thumb{videoid}.png")
+    except:
+        pass
+
+    background.save(f"cache/{videoid}_v4.png")
+    return f"cache/{videoid}_v4.png"
