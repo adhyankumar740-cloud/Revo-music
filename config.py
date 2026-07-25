@@ -22,7 +22,7 @@ DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 19000))
 ENABLE_TG_SCRAP_PLAY = getenv("ENABLE_TG_SCRAP_PLAY", "True").lower() == "true"
 VK_MUSIC_BOT = getenv("VK_MUSIC_BOT", "vkmusic_bot")
 TG_SCRAP_MENU_TIMEOUT = int(getenv("TG_SCRAP_MENU_TIMEOUT", 15))  # wait for the bot's results menu
-TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 60))  # wait for the audio file after clicking
+TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 45))  # wait for the audio file after clicking
 
 # Chat id of a group for logging bot's activities
 LOGGER_ID = int(getenv("LOGGER_ID", -1002094142057)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
