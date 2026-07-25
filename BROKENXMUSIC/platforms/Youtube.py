@@ -24,11 +24,7 @@ import aiohttp
 from BROKENXMUSIC import LOGGER
 
 
-try:
-    from BROKENXMUSIC import config
-except ImportError:
-    class config:
-        YOUTUBE_IMG_URL = "https://telegra.ph/file/8ba38eca9318beb6dcede.jpg"
+import config
 
 # Local (sibling) import — safe at module load time, unlike importing the
 # already-instantiated `TgScrap` object from the BROKENXMUSIC package,
