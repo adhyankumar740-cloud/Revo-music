@@ -80,6 +80,11 @@ async def _refresh_file_id(client, entry):
     channel_id = entry.get("channel_id")
     message_id = entry.get("message_id")
     if not channel_id or not message_id:
+        logger.error(
+            f"[SongCache] Entry {entry.get('normalized')!r} has no "
+            f"channel_id/message_id (legacy row?) — cannot refresh, will "
+            f"fall back to its stored file_id."
+        )
         return None
     try:
         msg = await client.get_messages(channel_id, message_id)
@@ -162,6 +167,19 @@ class SongCacheAPI:
             result = await client.download_media(file_id, file_name=filepath)
         except Exception as e:
             logger.error(f"[SongCache] fetch_file failed for {entry.get('normalized')!r}: {e}")
+            # Refresh already tried the origin message and still failed (or
+            # there was no origin message to refresh from) — this entry is
+            # dead weight that will just fail the same way on every future
+            # search hit. Drop it so the next TgScrap fallback re-populates
+            # a working replacement instead of us retrying a corpse forever.
+            try:
+                await songcachedb.delete_one({"_id": entry["_id"]})
+                logger.info(
+                    f"[SongCache] Removed unrecoverable entry "
+                    f"{entry.get('normalized')!r} from cache index."
+                )
+            except Exception:
+                pass
             return None, None
 
         # Keep the DB entry current for anything else that reads file_id directly.
