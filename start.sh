@@ -2,8 +2,6 @@
 echo "⚙️ Initializing Node.js Environment..."
 node -v
 npm -v
-echo "⚙️ Initializing BrokenXAPI"
-brokenx -v 
 
 echo "📡 Launching Tg-Scrap Server (Web Service + Downloader)..."
 (cd tg-scrap && PORT="${PORT:-10000}" node server.js) &
