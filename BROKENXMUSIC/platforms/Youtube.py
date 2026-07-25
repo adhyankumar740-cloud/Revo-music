@@ -53,6 +53,35 @@ async def _get_title(video_id: str) -> str:
     return video_id
 
 
+# YouTube titles are usually cluttered with stuff like "Full Song With Lyrics |
+# Actor, Actress" which the VK-Music Telegram bot's search can't match. Strip
+# that noise down to just the song name before using it as a search query.
+_NOISE_PATTERNS = [
+    r"\(.*?\)",
+    r"\[.*?\]",
+    r"\|.*",
+    r"[-–—:]\s*full\s+(video\s+)?song.*",
+    r"\bofficial\s+(music\s+)?video\b",
+    r"\bofficial\s+audio\b",
+    r"\bfull\s+video\s+song\b",
+    r"\bfull\s+song\b",
+    r"\bwith\s+lyrics?\b",
+    r"\blyric\s+video\b",
+    r"\blyrics?\b",
+    r"\bvideo\s+song\b",
+    r"\baudio\s+song\b",
+    r"\b(hd|4k|8k|1080p|720p)\b",
+]
+
+
+def _clean_query(title: str) -> str:
+    q = title
+    for pat in _NOISE_PATTERNS:
+        q = re.sub(pat, "", q, flags=re.IGNORECASE)
+    q = re.sub(r"\s{2,}", " ", q).strip(" -|:\u2013\u2014\"'\u2018\u2019\u201c\u201d")
+    return q or title
+
+
 async def download_song(link: str) -> str:
     """
     Audio downloads now go through the Tg-Scrap system (VK-Music-style
@@ -69,19 +98,29 @@ async def download_song(link: str) -> str:
 
     os.makedirs("downloads", exist_ok=True)
 
-    title = await _get_title(video_id)
+    raw_title = await _get_title(video_id)
+    query = _clean_query(raw_title)
+    logger.info(f"🔎 [AUDIO] Raw title: '{raw_title}' -> cleaned query: '{query}'")
 
     try:
-        track_details, filepath = await _tgscrap.download(title)
+        track_details, filepath = await _tgscrap.download(query)
     except Exception as e:
-        logger.error(f"❌ [AUDIO] TgScrap exception: {e}")
-        return None
+        logger.error(f"❌ [AUDIO] TgScrap exception (cleaned query): {e}")
+        track_details, filepath = None, None
+
+    if (not filepath or not os.path.exists(filepath)) and query != raw_title:
+        logger.info(f"↩️ [AUDIO] Cleaned query failed, retrying with raw title: '{raw_title}'")
+        try:
+            track_details, filepath = await _tgscrap.download(raw_title)
+        except Exception as e:
+            logger.error(f"❌ [AUDIO] TgScrap exception (raw title): {e}")
+            return None
 
     if not filepath or not os.path.exists(filepath):
-        logger.error(f"❌ [AUDIO] TgScrap failed for: {title}")
+        logger.error(f"❌ [AUDIO] TgScrap failed for: {query}")
         return None
 
-    logger.info(f"✅ [AUDIO] TgScrap download complete: {title}")
+    logger.info(f"✅ [AUDIO] TgScrap download complete: {query}")
     return filepath
 
 
