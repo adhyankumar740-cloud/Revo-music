@@ -17,6 +17,13 @@ class Broken(Client):
             in_memory=True,
             parse_mode=ParseMode.HTML,
             max_concurrent_transmissions=7,
+            # Pyrogram defaults to min(32, cpu_count()+4) worker threads —
+            # on a shared/cloud host that can report a high CPU count even
+            # though the container only gets a sliver of it, silently
+            # spawning up to 32 threads just for update dispatch. A small
+            # single-instance music bot doesn't need that many; each
+            # thread costs real memory for no benefit here.
+            workers=4,
         )
 
     async def start(self):
