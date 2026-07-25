@@ -19,7 +19,6 @@ speedtest-cli
 spotipy
 tgcrypto
 unidecode
-BROKENXAPI 
 py-yt-search
 yt-dlp
 youtube-search
