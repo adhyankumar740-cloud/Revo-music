@@ -38,10 +38,15 @@ class TgScrapAPI:
         return None
 
     async def _wait_for(self, client, chat_id, timeout, condition, poll_interval=1.5):
-        seen_ids = set()
+        # Only used to exclude messages that already existed before we sent
+        # the query. Deliberately NOT used to skip messages on later polls —
+        # vkmusic_bot edits its menu message in place to attach the audio,
+        # so the same message id must be re-checked every poll or the edit
+        # (and the audio) is missed forever.
+        baseline_ids = set()
         try:
             async for msg in client.get_chat_history(chat_id, limit=5):
-                seen_ids.add(msg.id)
+                baseline_ids.add(msg.id)
         except Exception:
             pass
 
@@ -50,9 +55,8 @@ class TgScrapAPI:
             await asyncio.sleep(poll_interval)
             try:
                 async for msg in client.get_chat_history(chat_id, limit=5):
-                    if msg.id in seen_ids:
+                    if msg.id in baseline_ids:
                         continue
-                    seen_ids.add(msg.id)
                     if condition(msg):
                         return msg
             except Exception:
