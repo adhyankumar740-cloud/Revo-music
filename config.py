@@ -45,6 +45,8 @@ SONG_CACHE_SOURCE_CHANNELS = [
 # Every song freshly pulled via TgScrap gets uploaded here and indexed, so the
 # next request for it is an instant file_id-based hit — no re-download.
 ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "True").lower() == "true"
+# CDN Cache is an unfinished feature (no CDNCache module exists yet) — keep off.
+ENABLE_CDN_CACHE = getenv("ENABLE_CDN_CACHE", "False").lower() == "true"
 _raw_song_cache_channel = getenv("SONG_CACHE_CHANNEL", "").strip()
 SONG_CACHE_CHANNEL = _normalize_channel(_raw_song_cache_channel) if _raw_song_cache_channel else None
 
