@@ -96,6 +96,13 @@ class TgScrapAPI:
         except Exception as e:
             logger.error(f"[TgScrap] Could not read button layout: {e}")
 
+        # This isn't a results list — it's the "no results" / pagination-settings
+        # menu (⬅️ ❌ ➡️ + bitrate/lossless/title toggles). Clicking (0,0) on it
+        # hits the ⬅️ previous-page button, not a track, so bail out instead.
+        if menu_msg.text and "found nothing" in menu_msg.text.lower():
+            logger.error(f"[TgScrap] Bot reported no results for: {query!r}")
+            return None, None
+
         try:
             click_result = await menu_msg.click(0, 0)
             logger.info(f"[TgScrap] Clicked (0,0). Result: {click_result!r}")
