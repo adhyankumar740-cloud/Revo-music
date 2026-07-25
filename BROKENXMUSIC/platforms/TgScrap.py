@@ -4,7 +4,10 @@ import re
 import time
 
 import config
+from BROKENXMUSIC import LOGGER
 from BROKENXMUSIC.utils.formatters import check_duration, seconds_to_min
+
+logger = LOGGER("TgScrap")
 
 # Downloaded songs are saved here (same folder tg-scrap's own scripts use,
 # kept for consistency even though tg-scrap's Node process isn't involved
@@ -68,11 +71,13 @@ class TgScrapAPI:
         """
         assistant = self._get_assistant()
         if not assistant:
+            logger.error(f"[TgScrap] No connected assistant available for query {query!r}")
             return None, None
 
         try:
             await assistant.send_message(self.bot_username, query)
-        except Exception:
+        except Exception as e:
+            logger.error(f"[TgScrap] Could not message {self.bot_username} for {query!r}: {e}")
             return None, None
 
         menu_msg = await self._wait_for(
@@ -83,11 +88,16 @@ class TgScrapAPI:
                            and getattr(m.reply_markup, "inline_keyboard", None)),
         )
         if not menu_msg:
+            logger.error(
+                f"[TgScrap] {self.bot_username} gave no results menu for {query!r} "
+                f"within {self.menu_timeout}s"
+            )
             return None, None
 
         try:
             await menu_msg.click(0, 0)
-        except Exception:
+        except Exception as e:
+            logger.error(f"[TgScrap] Could not click result menu for {query!r}: {e}")
             return None, None
 
         audio_msg = await self._wait_for(
@@ -97,6 +107,10 @@ class TgScrapAPI:
             lambda m: bool(m.audio or m.voice or (m.document and "audio" in (m.document.mime_type or ""))),
         )
         if not audio_msg:
+            logger.error(
+                f"[TgScrap] No audio received from {self.bot_username} for {query!r} "
+                f"within {self.audio_timeout}s"
+            )
             return None, None
 
         os.makedirs(TG_SCRAP_DOWNLOADS, exist_ok=True)
@@ -106,19 +120,34 @@ class TgScrapAPI:
 
         try:
             await assistant.download_media(audio_msg, file_name=filepath)
-        except Exception:
+        except Exception as e:
+            logger.error(f"[TgScrap] download_media failed for {query!r}: {e}")
             return None, None
 
         if not os.path.exists(filepath):
+            logger.error(f"[TgScrap] Downloaded file missing on disk for {query!r}: {filepath}")
             return None, None
 
+        # Validate the file is actually playable audio before handing it off
+        # to the voice-chat stream — a truncated/corrupt download would
+        # otherwise silently join the call and just produce no sound.
         try:
             dur_sec = await asyncio.get_event_loop().run_in_executor(
                 None, check_duration, filepath
             )
+            if not dur_sec:
+                raise ValueError("ffprobe reported zero/no duration")
             duration_min = seconds_to_min(dur_sec)
-        except Exception:
-            duration_min = "Unknown"
+        except Exception as e:
+            logger.error(
+                f"[TgScrap] Downloaded file for {query!r} failed validation "
+                f"(likely corrupt/incomplete): {e}"
+            )
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            return None, None
 
         track_details = {
             "title": query.title(),
