@@ -10,6 +10,7 @@ Lookup order (see play.py):
      request for the same song is a cache hit.
 """
 
+import asyncio
 import os
 import re
 import time
@@ -153,34 +154,56 @@ class SongCacheAPI:
 
         client, _ = await _resolve_client(entry.get("client_source"))
 
-        # Refresh from the origin message up front — file_reference bytes
-        # inside a stored file_id go stale over time, so don't gamble on the
-        # cached one and only find out after a failed download. One extra
-        # get_messages call here means the actual download succeeds on its
-        # first (and only) attempt.
-        file_id = await _refresh_file_id(client, entry) or entry.get("file_id")
+        file_id = entry.get("file_id")
         if not file_id:
             logger.error(f"[SongCache] No usable file_id for {entry.get('normalized')!r}")
             return None, None
 
+        # Try the stored file_id straight away — it's valid the vast
+        # majority of the time, so this keeps the common case down to a
+        # single network call (download) instead of always paying for an
+        # extra get_messages round-trip "just in case". Only refresh and
+        # retry once if the first attempt actually fails.
         try:
             result = await client.download_media(file_id, file_name=filepath)
         except Exception as e:
-            logger.error(f"[SongCache] fetch_file failed for {entry.get('normalized')!r}: {e}")
-            # Refresh already tried the origin message and still failed (or
-            # there was no origin message to refresh from) — this entry is
-            # dead weight that will just fail the same way on every future
-            # search hit. Drop it so the next TgScrap fallback re-populates
-            # a working replacement instead of us retrying a corpse forever.
-            try:
-                await songcachedb.delete_one({"_id": entry["_id"]})
-                logger.info(
-                    f"[SongCache] Removed unrecoverable entry "
-                    f"{entry.get('normalized')!r} from cache index."
+            logger.info(
+                f"[SongCache] Stored file_id failed for "
+                f"{entry.get('normalized')!r} ({e}) — refreshing and "
+                f"retrying once."
+            )
+            fresh_file_id = await _refresh_file_id(client, entry)
+            if not fresh_file_id:
+                logger.error(
+                    f"[SongCache] fetch_file failed for {entry.get('normalized')!r}: {e}"
                 )
-            except Exception:
-                pass
-            return None, None
+                try:
+                    await songcachedb.delete_one({"_id": entry["_id"]})
+                    logger.info(
+                        f"[SongCache] Removed unrecoverable entry "
+                        f"{entry.get('normalized')!r} from cache index."
+                    )
+                except Exception:
+                    pass
+                return None, None
+
+            file_id = fresh_file_id
+            try:
+                result = await client.download_media(file_id, file_name=filepath)
+            except Exception as e2:
+                logger.error(
+                    f"[SongCache] fetch_file failed even after refresh for "
+                    f"{entry.get('normalized')!r}: {e2}"
+                )
+                try:
+                    await songcachedb.delete_one({"_id": entry["_id"]})
+                    logger.info(
+                        f"[SongCache] Removed unrecoverable entry "
+                        f"{entry.get('normalized')!r} from cache index."
+                    )
+                except Exception:
+                    pass
+                return None, None
 
         # Keep the DB entry current for anything else that reads file_id directly.
         if file_id != entry.get("file_id"):
@@ -198,6 +221,128 @@ class SongCacheAPI:
             "filepath": filepath,
         }
         return track_details, filepath
+
+    async def stream_or_fetch(self, entry, save_dir=None, fifo_open_timeout=20):
+        """Like fetch_file, but instead of waiting for the whole track to
+        land on disk before playback can start, it pipes Telegram's chunks
+        into a named pipe (FIFO) as they arrive — ffmpeg (via pytgcalls)
+        reads from that FIFO exactly like it would a regular file, so audio
+        starts as soon as the first chunk is in, not after the full
+        download finishes.
+
+        Returns (track_details, fifo_path) on success. On ANY failure along
+        the way (file_id dead even after refresh, mkfifo unsupported,
+        nobody opens the FIFO in time, ...) it transparently falls back to
+        the plain fetch_file() full-download path, so playback never
+        breaks — it just loses the head-start."""
+        client, _ = await _resolve_client(entry.get("client_source"))
+        norm = entry.get("normalized", "track")
+        file_id = entry.get("file_id")
+        if not file_id:
+            return await self.fetch_file(entry, save_dir=save_dir)
+
+        async def _open_gen(fid):
+            """Pull the first chunk to prove this file_id actually works
+            before we commit to a FIFO — a mid-stream failure is much
+            harder to recover from than a failure right here."""
+            gen = client.stream_media(fid)
+            try:
+                chunk = await gen.__anext__()
+                return gen, chunk
+            except StopAsyncIteration:
+                return gen, b""
+            except Exception as e:
+                return None, e
+
+        gen, first_chunk = await _open_gen(file_id)
+        if gen is None:
+            # First attempt failed (likely FILE_REFERENCE_EXPIRED) — refresh
+            # once and retry, same as fetch_file does.
+            logger.info(
+                f"[SongCache] Stream probe failed for {norm!r} "
+                f"({first_chunk}) — refreshing and retrying once."
+            )
+            fresh_file_id = await _refresh_file_id(client, entry)
+            if fresh_file_id:
+                gen, first_chunk = await _open_gen(fresh_file_id)
+                if gen is not None:
+                    file_id = fresh_file_id
+
+        if gen is None:
+            logger.error(
+                f"[SongCache] Streaming unavailable for {norm!r} even after "
+                f"refresh — falling back to full download."
+            )
+            return await self.fetch_file(entry, save_dir=save_dir)
+
+        save_dir = save_dir or os.path.join(os.getcwd(), "tg-scrap", "downloads")
+        os.makedirs(save_dir, exist_ok=True)
+        safe_name = re.sub(r"[^a-z0-9]+", "_", norm).strip("_") or "track"
+        fifo_path = os.path.join(save_dir, f"{safe_name}_{int(time.time())}.fifo")
+
+        try:
+            os.mkfifo(fifo_path)
+        except Exception as e:
+            logger.error(
+                f"[SongCache] mkfifo failed for {norm!r} ({e}) — falling "
+                f"back to full download."
+            )
+            return await self.fetch_file(entry, save_dir=save_dir)
+
+        async def _pump():
+            fd = None
+            try:
+                # Blocks (in a worker thread, not the event loop) until
+                # pytgcalls/ffmpeg opens the other end for reading. Timeout
+                # guards against leaking a stuck thread if playback never
+                # actually starts (e.g. the voice chat join failed).
+                fd = await asyncio.wait_for(
+                    asyncio.to_thread(os.open, fifo_path, os.O_WRONLY),
+                    timeout=fifo_open_timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"[SongCache] Nobody read the FIFO for {norm!r} within "
+                    f"{fifo_open_timeout}s — abandoning stream."
+                )
+            except Exception as e:
+                logger.error(f"[SongCache] FIFO open failed for {norm!r}: {e}")
+
+            if fd is not None:
+                try:
+                    if first_chunk:
+                        await asyncio.to_thread(os.write, fd, first_chunk)
+                    async for chunk in gen:
+                        await asyncio.to_thread(os.write, fd, chunk)
+                except Exception as e:
+                    logger.error(
+                        f"[SongCache] Streaming into FIFO failed for {norm!r}: {e}"
+                    )
+                finally:
+                    try:
+                        os.close(fd)
+                    except Exception:
+                        pass
+
+            try:
+                os.remove(fifo_path)
+            except Exception:
+                pass
+
+        asyncio.create_task(_pump())
+
+        if file_id != entry.get("file_id"):
+            try:
+                await songcachedb.update_one({"_id": entry["_id"]}, {"$set": {"file_id": file_id}})
+            except Exception:
+                pass
+
+        track_details = {
+            "title": entry.get("title") or norm.title(),
+            "duration_min": entry.get("duration_min") or "Unknown",
+            "filepath": fifo_path,
+        }
+        return track_details, fifo_path
 
     async def save_to_cache(self, query: str, local_filepath: str, title: str, duration_min):
         """Upload a freshly TgScrap-downloaded file to the cache channel and
