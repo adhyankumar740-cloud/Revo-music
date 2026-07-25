@@ -1,7 +1,6 @@
 import socket
 import time
 
-import heroku3
 from pyrogram import filters
 
 import config
@@ -65,6 +64,8 @@ def heroku():
     global HAPP
     if is_heroku:
         if config.HEROKU_API_KEY and config.HEROKU_APP_NAME:
+            import heroku3  # lazy: only needed on an actual Heroku deploy
+
             try:
                 Heroku = heroku3.from_key(config.HEROKU_API_KEY)
                 HAPP = Heroku.app(config.HEROKU_APP_NAME)
