@@ -1,4 +1,5 @@
 import asyncio
+import random
 
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.errors import (
@@ -21,7 +22,7 @@ from BROKENXMUSIC.utils.database import (
     is_maintenance,
 )
 from BROKENXMUSIC.utils.inline import botplaylist_markup
-from config import PLAYLIST_IMG_URL, SUPPORT_CHAT, adminlist
+from config import AYU, PLAYLIST_IMG_URL, SUPPORT_CHAT, adminlist
 from strings import get_string
 
 links = {}
@@ -29,6 +30,12 @@ links = {}
 
 def PlayWrapper(command):
     async def wrapper(client, message):
+        # Fire this off before anything else — no DB reads, no
+        # message.delete(), nothing. Every await we do before the user
+        # sees *something* is time a competing bot in the same group can
+        # use to grab the query and start playing first.
+        mystic = await message.reply_text(random.choice(AYU))
+
         language = await get_lang(message.chat.id)
         _ = get_string(language)
         if message.sender_chat:
@@ -42,11 +49,11 @@ def PlayWrapper(command):
                     ]
                 ]
             )
-            return await message.reply_text(_["general_3"], reply_markup=upl)
+            return await mystic.edit_text(_["general_3"], reply_markup=upl)
 
         if await is_maintenance() is False:
             if message.from_user.id not in SUDOERS:
-                return await message.reply_text(
+                return await mystic.edit_text(
                     text=f"{app.mention} ɪs ᴜɴᴅᴇʀ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ, ᴠɪsɪᴛ <a href={SUPPORT_CHAT}>sᴜᴘᴘᴏʀᴛ ᴄʜᴀᴛ</a> ғᴏʀ ᴋɴᴏᴡɪɴɢ ᴛʜᴇ ʀᴇᴀsᴏɴ.",
                     disable_web_page_preview=True,
                 )
@@ -70,8 +77,12 @@ def PlayWrapper(command):
         if audio_telegram is None and video_telegram is None and url is None:
             if len(message.command) < 2:
                 if "stream" in message.command:
-                    return await message.reply_text(_["str_1"])
+                    return await mystic.edit_text(_["str_1"])
                 buttons = botplaylist_markup(_)
+                try:
+                    await mystic.delete()
+                except:
+                    pass
                 return await message.reply_photo(
                     photo=PLAYLIST_IMG_URL,
                     caption=_["play_18"],
@@ -80,12 +91,18 @@ def PlayWrapper(command):
         if message.command[0][0] == "c":
             chat_id = await get_cmode(message.chat.id)
             if chat_id is None:
-                return await message.reply_text(_["setting_7"])
+                return await mystic.edit_text(_["setting_7"])
             try:
                 chat = await app.get_chat(chat_id)
             except:
-                return await message.reply_text(_["cplay_4"])
+                return await mystic.edit_text(_["cplay_4"])
             channel = chat.title
+            # We sent a generic ack up front before we knew this was a
+            # channel-mode play — now that we know, swap in the proper text.
+            try:
+                await mystic.edit_text(_["play_2"].format(channel))
+            except:
+                pass
         else:
             chat_id = message.chat.id
             channel = None
@@ -95,10 +112,10 @@ def PlayWrapper(command):
             if message.from_user.id not in SUDOERS:
                 admins = adminlist.get(message.chat.id)
                 if not admins:
-                    return await message.reply_text(_["admin_13"])
+                    return await mystic.edit_text(_["admin_13"])
                 else:
                     if message.from_user.id not in admins:
-                        return await message.reply_text(_["play_4"])
+                        return await mystic.edit_text(_["play_4"])
         if message.command[0][0] == "v":
             video = True
         else:
@@ -108,7 +125,7 @@ def PlayWrapper(command):
                 video = True if message.command[0][1] == "v" else None
         if message.command[0][-1] == "e":
             if not await is_active_chat(chat_id):
-                return await message.reply_text(_["play_16"])
+                return await mystic.edit_text(_["play_16"])
             fplay = True
         else:
             fplay = None
@@ -190,6 +207,7 @@ def PlayWrapper(command):
             playmode,
             url,
             fplay,
+            mystic,
         )
 
     return wrapper
