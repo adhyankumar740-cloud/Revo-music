@@ -46,26 +46,28 @@ class TgScrapAPI:
                 return client
         return None
 
-    async def _wait_for(self, client, chat_id, timeout, condition, poll_interval=1.5):
-        seen_ids = set()
-        try:
-            async for msg in client.get_chat_history(chat_id, limit=5):
-                seen_ids.add(msg.id)
-        except Exception:
-            pass
-
+    async def _wait_for(self, client, chat_id, min_id, timeout, condition, poll_interval=0.4):
+        """Assistants run with no_updates=True (deliberately — it avoids the
+        RAM/CPU cost of live update dispatch for accounts that don't need
+        it), so they never receive push events and a MessageHandler would
+        simply never fire here. Polling get_chat_history is the only option
+        for them — but poll fast, and use a strict `msg.id > min_id`
+        threshold (the ID of the message we just sent) instead of a
+        seen-ids/history snapshot. That threshold can't ever miss a fast
+        reply: message IDs are monotonically increasing per chat, so
+        anything the bot sends back is guaranteed to have a higher ID than
+        our own message, no matter how quickly it arrives."""
         start = time.time()
         while time.time() - start < timeout:
-            await asyncio.sleep(poll_interval)
             try:
                 async for msg in client.get_chat_history(chat_id, limit=5):
-                    if msg.id in seen_ids:
+                    if msg.id <= min_id:
                         continue
-                    seen_ids.add(msg.id)
                     if condition(msg):
                         return msg
             except Exception:
-                continue
+                pass
+            await asyncio.sleep(poll_interval)
         return None
 
     async def download(self, query: str):
@@ -78,12 +80,6 @@ class TgScrapAPI:
             logger.error(f"[TgScrap] No connected assistant available for query {query!r}")
             return None, None
 
-        try:
-            await assistant.send_message(self.bot_username, query)
-        except Exception as e:
-            logger.error(f"[TgScrap] Could not message {self.bot_username} for {query!r}: {e}")
-            return None, None
-
         # Some bots (Shazam-style finders) send several messages back for
         # one query: a search-echo message (often carries just one small
         # button, e.g. a 🔍 icon) first, THEN the real track-list menu
@@ -94,9 +90,16 @@ class TgScrapAPI:
         # first.
         MIN_MENU_ROWS = 3
 
+        try:
+            sent = await assistant.send_message(self.bot_username, query)
+        except Exception as e:
+            logger.error(f"[TgScrap] Could not message {self.bot_username} for {query!r}: {e}")
+            return None, None
+
         menu_msg = await self._wait_for(
             assistant,
             self.bot_username,
+            sent.id,
             self.menu_timeout,
             lambda m: bool(getattr(m, "reply_markup", None))
             and len(getattr(m.reply_markup, "inline_keyboard", []) or []) >= MIN_MENU_ROWS,
@@ -127,6 +130,7 @@ class TgScrapAPI:
             next_msg = await self._wait_for(
                 assistant,
                 self.bot_username,
+                current_menu.id,
                 self.audio_timeout,
                 lambda m: bool(
                     m.audio or m.voice
