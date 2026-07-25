@@ -275,8 +275,8 @@ class SongCacheAPI:
             """Pull the first chunk to prove this file_id actually works
             before we commit to a FIFO — a mid-stream failure is much
             harder to recover from than a failure right here."""
-            gen = client.stream_media(fid)
             try:
+                gen = client.stream_media(fid)
                 chunk = await gen.__anext__()
                 return gen, chunk
             except StopAsyncIteration:
