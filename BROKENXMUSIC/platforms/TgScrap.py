@@ -84,31 +84,27 @@ class TgScrapAPI:
             logger.error(f"[TgScrap] Could not message {self.bot_username} for {query!r}: {e}")
             return None, None
 
-        menu_msg = await self._wait_for(
-            assistant,
-            self.bot_username,
-            self.menu_timeout,
-            lambda m: bool(getattr(m, "reply_markup", None)
-                           and getattr(m.reply_markup, "inline_keyboard", None)),
-        )
-        if not menu_msg:
-            logger.error(
-                f"[TgScrap] {self.bot_username} gave no results menu for {query!r} "
-                f"within {self.menu_timeout}s"
-            )
-            return None, None
+        # Some bots (Shazam-style finders) send several messages back for
+        # one query: a search-echo message (often carries just one small
+        # button, e.g. a 🔍 icon) first, THEN the real track-list menu
+        # (many button rows: each track + "More tracks" + a search/share
+        # row + "Add to group" ...), and sometimes a promo message after
+        # that. Requiring several rows filters out the echo message so we
+        # target the actual track list, not whatever keyboard shows up
+        # first.
+        MIN_MENU_ROWS = 3
 
         menu_msg = await self._wait_for(
             assistant,
             self.bot_username,
             self.menu_timeout,
-            lambda m: bool(getattr(m, "reply_markup", None)
-                           and getattr(m.reply_markup, "inline_keyboard", None)),
+            lambda m: bool(getattr(m, "reply_markup", None))
+            and len(getattr(m.reply_markup, "inline_keyboard", []) or []) >= MIN_MENU_ROWS,
         )
         if not menu_msg:
             logger.error(
-                f"[TgScrap] {self.bot_username} gave no results menu for {query!r} "
-                f"within {self.menu_timeout}s"
+                f"[TgScrap] {self.bot_username} gave no results menu "
+                f"(>= {MIN_MENU_ROWS} rows) for {query!r} within {self.menu_timeout}s"
             )
             return None, None
 
@@ -135,7 +131,7 @@ class TgScrapAPI:
                 lambda m: bool(
                     m.audio or m.voice
                     or (m.document and "audio" in (m.document.mime_type or ""))
-                    or (getattr(m, "reply_markup", None) and getattr(m.reply_markup, "inline_keyboard", None))
+                    or len(getattr(getattr(m, "reply_markup", None), "inline_keyboard", []) or []) >= 2
                 ),
             )
             if not next_msg:
@@ -147,7 +143,10 @@ class TgScrapAPI:
                 audio_msg = next_msg
                 break
 
-            # It's another menu — go one hop deeper.
+            # It's another real menu (2+ rows, e.g. a quality/format
+            # picker) — go one hop deeper. Single-button messages (promo
+            # footers etc.) don't satisfy the condition above, so they're
+            # simply skipped over by _wait_for.
             current_menu = next_msg
 
         if not audio_msg:
