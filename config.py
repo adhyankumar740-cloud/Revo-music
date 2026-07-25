@@ -24,6 +24,15 @@ VK_MUSIC_BOT = getenv("VK_MUSIC_BOT", "vkmusic_bot")
 TG_SCRAP_MENU_TIMEOUT = int(getenv("TG_SCRAP_MENU_TIMEOUT", 15))  # wait for the bot's results menu
 TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 45))  # wait for the audio file after clicking
 
+# ⚠️ Song Cache: channels containing songs, checked BEFORE hitting vkmusic_bot.
+# Comma-separated channel ids/usernames, e.g. "-1001111111111,-1002222222222,@mychannel"
+SONG_CACHE_SOURCE_CHANNELS = [
+    c.strip() for c in getenv("SONG_CACHE_SOURCE_CHANNELS", "").split(",") if c.strip()
+]
+# Where freshly-downloaded (vkmusic_bot) songs get uploaded to grow the cache over time.
+SONG_CACHE_CHANNEL = getenv("SONG_CACHE_CHANNEL", "")
+ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "True").lower() == "true"
+
 # Chat id of a group for logging bot's activities
 LOGGER_ID = int(getenv("LOGGER_ID", -1002094142057)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
 
