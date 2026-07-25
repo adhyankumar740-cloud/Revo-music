@@ -371,9 +371,9 @@ async def play_commnd(
             cache_hit = None if tg_details else await SongCache.search(query)
             if cache_hit:
                 try:
-                    tg_details, tg_filepath = await SongCache.stream_or_fetch(cache_hit)
+                    tg_details, tg_filepath = await SongCache.fetch_file(cache_hit)
                 except Exception as e:
-                    print(f"[SongCache stream_or_fetch Error] {e}\n{traceback.format_exc()}")
+                    print(f"[SongCache fetch_file Error] {e}\n{traceback.format_exc()}")
                     tg_details, tg_filepath = None, None
 
             from_cache = bool(tg_details) and not from_cdn
