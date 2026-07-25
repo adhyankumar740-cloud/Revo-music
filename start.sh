@@ -2,8 +2,8 @@
 echo "🔑 Authorizing Telegram Bot..."
 
 while true; do
-    output=$(python3 -u -m BROKENXMUSIC 2>&1 | tee /tmp/last_run.log)
-    wait_time=$(echo "$output" | grep -oP "A wait of \K[0-9]+(?= seconds)")
+    python3 -u -m BROKENXMUSIC 2>&1 | tee /tmp/last_run.log
+    wait_time=$(grep -oP "A wait of \K[0-9]+(?= seconds)" /tmp/last_run.log | tail -1)
     if [ -n "$wait_time" ]; then
         echo "⏳ FloodWait detected, sleeping for ${wait_time}s..."
         sleep "$wait_time"
