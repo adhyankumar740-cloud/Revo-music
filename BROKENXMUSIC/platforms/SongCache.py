@@ -15,6 +15,7 @@ import re
 import time
 
 import config
+from pymongo import UpdateOne
 from pyrogram.errors import PeerIdInvalid
 from BROKENXMUSIC import LOGGER, app
 from BROKENXMUSIC.core.mongo import mongodb
@@ -278,6 +279,19 @@ class SongCacheAPI:
                 f"(limit={limit_per_channel or 'none'}, resuming before "
                 f"message_id={offset_id or 'latest'}) ..."
             )
+            pending_ops = []
+            BATCH_SIZE = 100
+
+            async def _flush(ops):
+                if not ops:
+                    return 0
+                try:
+                    result = await songcachedb.bulk_write(ops, ordered=False)
+                    return result.upserted_count
+                except Exception as e:
+                    logger.error(f"[SongCache] Bulk DB write failed ({len(ops)} ops): {e}")
+                    return 0
+
             try:
                 async for msg in client.get_chat_history(
                     channel, limit=limit_per_channel or 0, offset_id=offset_id
@@ -326,8 +340,8 @@ class SongCacheAPI:
                     except Exception:
                         pass
 
-                    try:
-                        await songcachedb.update_one(
+                    pending_ops.append(
+                        UpdateOne(
                             {"normalized": norm},
                             {
                                 "$setOnInsert": {
@@ -343,10 +357,16 @@ class SongCacheAPI:
                             },
                             upsert=True,
                         )
-                        channel_count += 1
-                    except Exception as e:
-                        logger.error(f"[SongCache] DB write failed while indexing {title!r}: {e}")
+                    )
+
+                    if len(pending_ops) >= BATCH_SIZE:
+                        channel_count += await _flush(pending_ops)
+                        pending_ops = []
+
+                channel_count += await _flush(pending_ops)
+                pending_ops = []
             except Exception as e:
+                channel_count += await _flush(pending_ops)
                 logger.error(f"[SongCache] Failed indexing channel {channel}: {e}")
                 continue
 
