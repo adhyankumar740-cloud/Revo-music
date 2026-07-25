@@ -20,6 +20,7 @@ from .platforms import *
 Apple = AppleAPI()
 Carbon = CarbonAPI()
 SoundCloud = SoundAPI()
+TgScrap = TgScrapAPI()
 Spotify = SpotifyAPI()
 Resso = RessoAPI()
 Telegram = TeleAPI()
