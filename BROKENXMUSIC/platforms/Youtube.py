@@ -84,9 +84,9 @@ def _clean_query(title: str) -> str:
 
 async def download_song(link: str) -> str:
     """
-    Audio downloads now go through the Tg-Scrap system (VK-Music-style
-    Telegram bot, driven by our own userbot) instead of the old BrokenXAPI
-    service.
+    Audio downloads check the Song Cache (your own channels) first, then
+    fall back to Tg-Scrap (VK-Music-style Telegram bot, driven by our own
+    userbot) instead of the old BrokenXAPI service.
     """
     video_id = _extract_video_id(link)
     logger = LOGGER("TgScrap/Youtube.py")
@@ -101,6 +101,20 @@ async def download_song(link: str) -> str:
     raw_title = await _get_title(video_id)
     query = _clean_query(raw_title)
     logger.info(f"🔎 [AUDIO] Raw title: '{raw_title}' -> cleaned query: '{query}'")
+
+    # Song Cache: check our own channels first — instant, no vkmusic_bot
+    # round-trip at all.
+    if config.ENABLE_SONG_CACHE:
+        from BROKENXMUSIC import SongCache
+        try:
+            cache_hit = await SongCache.search(query) or await SongCache.search(raw_title)
+            if cache_hit:
+                track_details, filepath = await SongCache.fetch_file(cache_hit)
+                if filepath and os.path.exists(filepath):
+                    logger.info(f"✅ [AUDIO] Song Cache hit: {query!r}")
+                    return filepath
+        except Exception as e:
+            logger.error(f"❌ [AUDIO] Song Cache lookup failed: {e}")
 
     try:
         track_details, filepath = await _tgscrap.download(query)
@@ -121,6 +135,15 @@ async def download_song(link: str) -> str:
         return None
 
     logger.info(f"✅ [AUDIO] TgScrap download complete: {query}")
+
+    # Grow the cache so the next request for this song is instant.
+    if config.ENABLE_SONG_CACHE and config.SONG_CACHE_CHANNEL:
+        from BROKENXMUSIC import SongCache
+        try:
+            await SongCache.save_to_cache(query, filepath, track_details["title"], track_details["duration_min"])
+        except Exception as e:
+            logger.error(f"❌ [AUDIO] Song Cache save failed: {e}")
+
     return filepath
 
 
