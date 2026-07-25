@@ -70,11 +70,13 @@ class TgScrapAPI:
             await asyncio.sleep(poll_interval)
         return None
 
-    async def download(self, query: str):
-        """
-        Returns (track_details, filepath) on success, or (None, None) if
-        the bot didn't reply / no audio came back in time.
-        """
+    async def _locate_audio(self, query: str):
+        """Message the scraper bot, click through its menu(s), and return
+        (assistant, audio_msg) once an actual audio message shows up — or
+        (None, None) on timeout/failure. This is the shared, unavoidably
+        sequential part (search -> menu -> click); `download()` and
+        `stream_or_download()` both build on top of it, they just differ
+        in how they turn `audio_msg` into playable bytes."""
         assistant = self._get_assistant()
         if not assistant:
             logger.error(f"[TgScrap] No connected assistant available for query {query!r}")
@@ -160,6 +162,26 @@ class TgScrapAPI:
             )
             return None, None
 
+        return assistant, audio_msg
+
+    async def download(self, query: str):
+        """
+        Returns (track_details, filepath) on success, or (None, None) if
+        the bot didn't reply / no audio came back in time.
+
+        Full-download path: waits for the entire file to land on disk and
+        validates it with ffprobe before returning. Safe and simple, but
+        the caller (and therefore the voice-chat join) can't start until
+        the whole file has been transferred. Prefer stream_or_download()
+        for actual playback — this one's still handy for callers that
+        genuinely need a real file on disk (e.g. re-uploading to a cache
+        channel).
+        """
+        located = await self._locate_audio(query)
+        if not located or not located[0]:
+            return None, None
+        assistant, audio_msg = located
+
         os.makedirs(TG_SCRAP_DOWNLOADS, exist_ok=True)
         safe_name = re.sub(r"[^a-z0-9]+", "_", query.lower()).strip("_") or "track"
         file_name = f"{safe_name}_{int(time.time())}.mp3"
@@ -190,6 +212,146 @@ class TgScrapAPI:
                 f"[TgScrap] Downloaded file for {query!r} failed validation "
                 f"(likely corrupt/incomplete): {e}"
             )
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            return None, None
+
+        track_details = {
+            "title": query.title(),
+            "duration_min": duration_min,
+            "filepath": filepath,
+        }
+        return track_details, filepath
+
+    async def stream_or_download(self, query: str, save_dir=None, fifo_open_timeout=20):
+        """Like download(), but instead of waiting for the whole track to
+        land on disk before playback can even be attempted, it pipes the
+        scraper bot's chunks into a named pipe (FIFO) as they arrive —
+        ffmpeg (via pytgcalls) reads from that FIFO exactly like it would a
+        regular file, so join_call()/play() can be issued immediately and
+        audio starts as soon as the first chunk is in, instead of after
+        search + menu-clicks + full-download + ffprobe validation all
+        finish first.
+
+        Returns (track_details, fifo_path) on success, or (None, None) if
+        the bot never produced audio, or if the FIFO plumbing itself isn't
+        available on this platform (falls back to download() then)."""
+        located = await self._locate_audio(query)
+        if not located or not located[0]:
+            return None, None
+        assistant, audio_msg = located
+
+        async def _open_gen():
+            gen = assistant.stream_media(audio_msg)
+            try:
+                chunk = await gen.__anext__()
+                return gen, chunk
+            except StopAsyncIteration:
+                return gen, b""
+            except Exception as e:
+                return None, e
+
+        gen, first_chunk = await _open_gen()
+        if gen is None:
+            logger.info(
+                f"[TgScrap] Stream probe failed for {query!r} ({first_chunk}) "
+                f"— falling back to full download."
+            )
+            return await self._download_from_audio_msg(query, assistant, audio_msg)
+
+        save_dir = save_dir or TG_SCRAP_DOWNLOADS
+        os.makedirs(save_dir, exist_ok=True)
+        safe_name = re.sub(r"[^a-z0-9]+", "_", query.lower()).strip("_") or "track"
+        fifo_path = os.path.join(save_dir, f"{safe_name}_{int(time.time())}.fifo")
+
+        try:
+            os.mkfifo(fifo_path)
+        except Exception as e:
+            logger.error(
+                f"[TgScrap] mkfifo failed for {query!r} ({e}) — falling back "
+                f"to full download."
+            )
+            return await self._download_from_audio_msg(query, assistant, audio_msg)
+
+        async def _pump():
+            fd = None
+            try:
+                fd = await asyncio.wait_for(
+                    asyncio.to_thread(os.open, fifo_path, os.O_WRONLY),
+                    timeout=fifo_open_timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"[TgScrap] Nobody read the FIFO for {query!r} within "
+                    f"{fifo_open_timeout}s — abandoning stream."
+                )
+            except Exception as e:
+                logger.error(f"[TgScrap] FIFO open failed for {query!r}: {e}")
+
+            if fd is not None:
+                try:
+                    if first_chunk:
+                        await asyncio.to_thread(os.write, fd, first_chunk)
+                    async for chunk in gen:
+                        await asyncio.to_thread(os.write, fd, chunk)
+                except Exception as e:
+                    logger.error(f"[TgScrap] Streaming into FIFO failed for {query!r}: {e}")
+                finally:
+                    try:
+                        os.close(fd)
+                    except Exception:
+                        pass
+            try:
+                os.remove(fifo_path)
+            except Exception:
+                pass
+
+        asyncio.create_task(_pump())
+
+        duration_min = "Unknown"
+        try:
+            dur = getattr(getattr(audio_msg, "audio", None) or getattr(audio_msg, "voice", None), "duration", 0)
+            if dur:
+                duration_min = seconds_to_min(dur)
+        except Exception:
+            pass
+
+        track_details = {
+            "title": query.title(),
+            "duration_min": duration_min,
+            "filepath": fifo_path,
+        }
+        return track_details, fifo_path
+
+    async def _download_from_audio_msg(self, query, assistant, audio_msg):
+        """Shared tail end of download() (full-file-on-disk + ffprobe
+        validation), reusable by stream_or_download()'s fallback path
+        without re-running the search/menu-click steps."""
+        os.makedirs(TG_SCRAP_DOWNLOADS, exist_ok=True)
+        safe_name = re.sub(r"[^a-z0-9]+", "_", query.lower()).strip("_") or "track"
+        file_name = f"{safe_name}_{int(time.time())}.mp3"
+        filepath = os.path.join(TG_SCRAP_DOWNLOADS, file_name)
+
+        try:
+            await assistant.download_media(audio_msg, file_name=filepath)
+        except Exception as e:
+            logger.error(f"[TgScrap] download_media failed for {query!r}: {e}")
+            return None, None
+
+        if not os.path.exists(filepath):
+            return None, None
+
+        try:
+            dur_sec = await asyncio.get_event_loop().run_in_executor(
+                None, check_duration, filepath
+            )
+            if not dur_sec:
+                raise ValueError("ffprobe reported zero/no duration")
+            duration_min = seconds_to_min(dur_sec)
+        except Exception as e:
+            logger.error(f"[TgScrap] Fallback download validation failed for {query!r}: {e}")
             try:
                 os.remove(filepath)
             except Exception:
