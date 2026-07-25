@@ -83,18 +83,18 @@ class Call(PyTgCalls):
 
 
     def _build_stream(
-    self,
-    source: str,
-    video: bool,
-    ffmpeg: str | None = None,
-) -> types.MediaStream:
-    return types.MediaStream(
-        media_path=source,
-        audio_parameters=types.AudioQuality.MEDIUM,
-        audio_flags=types.MediaStream.Flags.REQUIRED,
-        video_flags=types.MediaStream.Flags.IGNORE,
-        ffmpeg_parameters=f"-threads 1 {ffmpeg}" if ffmpeg else "-threads 1",
-    )
+        self,
+        source: str,
+        video: bool,
+        ffmpeg: str | None = None,
+    ) -> types.MediaStream:
+        return types.MediaStream(
+            media_path=source,
+            audio_parameters=types.AudioQuality.MEDIUM,
+            audio_flags=types.MediaStream.Flags.REQUIRED,
+            video_flags=types.MediaStream.Flags.IGNORE,
+            ffmpeg_parameters=f"-threads 1 {ffmpeg}" if ffmpeg else "-threads 1",
+        )
 
         
 
