@@ -9,7 +9,6 @@ import re
 import json
 from typing import Union
 import requests
-import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
@@ -38,10 +37,41 @@ def _extract_video_id(link: str) -> str:
     return link.split("v=")[-1].split("&")[0] if "v=" in link else link
 
 
+# YoutubeSearch does blocking HTTP scraping under the hood (plain `requests`,
+# no asyncio). Calling it directly inside an `async def` freezes the ENTIRE
+# bot's event loop for however long that HTTP round-trip takes — every group,
+# every voice chat, every other user's command stalls too. Always dispatch it
+# to a worker thread instead, and cache identical lookups briefly so repeated
+# requests (a song replayed, several chats requesting the same track) don't
+# re-hit YouTube at all.
+_search_cache: dict = {}
+_SEARCH_CACHE_TTL = 300  # seconds
+
+
+async def _search_youtube(query: str, max_results: int = 1):
+    import time as _time
+
+    cache_key = (query, max_results)
+    cached = _search_cache.get(cache_key)
+    if cached and (_time.time() - cached[0]) < _SEARCH_CACHE_TTL:
+        return cached[1]
+
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(
+        None, lambda: YoutubeSearch(query, max_results=max_results).to_dict()
+    )
+    _search_cache[cache_key] = (_time.time(), results)
+    # Hot-path perf cache, not a correctness-critical store — just drop
+    # everything once it gets big instead of tracking per-key expiry.
+    if len(_search_cache) > 500:
+        _search_cache.clear()
+    return results
+
+
 async def _get_title(video_id: str) -> str:
     """Best-effort title lookup, used only to build a search query for TgScrap."""
     try:
-        results = YoutubeSearch(f"https://www.youtube.com/watch?v={video_id}", max_results=1).to_dict()
+        results = await _search_youtube(f"https://www.youtube.com/watch?v={video_id}", 1)
         if results:
             return results[0].get("title") or video_id
     except Exception:
@@ -177,6 +207,8 @@ async def download_video(link: str) -> str:
         loop = asyncio.get_event_loop()
 
         def _run():
+            import yt_dlp  # lazy: audio-only playback (the common case) never needs this
+
             with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
                 ydl.download([url])
 
@@ -281,7 +313,7 @@ class YouTubeAPI:
             
         # Updated to use YoutubeSearch
         try:
-            results = YoutubeSearch(link, max_results=1).to_dict()
+            results = await _search_youtube(link, 1)
             if not results:
                 return None, None, None, None, None
             
@@ -302,7 +334,7 @@ class YouTubeAPI:
         if "&" in link:
             link = link.split("&")[0]
         try:
-            results = YoutubeSearch(link, max_results=1).to_dict()
+            results = await _search_youtube(link, 1)
             if results:
                 return results[0].get("title")
         except:
@@ -314,7 +346,7 @@ class YouTubeAPI:
         if "&" in link:
             link = link.split("&")[0]
         try:
-            results = YoutubeSearch(link, max_results=1).to_dict()
+            results = await _search_youtube(link, 1)
             if results:
                 return results[0].get("duration")
         except:
@@ -326,7 +358,7 @@ class YouTubeAPI:
         if "&" in link:
             link = link.split("&")[0]
         try:
-            results = YoutubeSearch(link, max_results=1).to_dict()
+            results = await _search_youtube(link, 1)
             if results:
                 return results[0].get("thumbnails", [""])[0]
         except:
@@ -371,7 +403,7 @@ class YouTubeAPI:
                 link = link.split("&")[0]
 
             
-            results = YoutubeSearch(link, max_results=1).to_dict()
+            results = await _search_youtube(link, 1)
             
             print(f"YoutubeSearch Results: {results}")
 
@@ -416,6 +448,8 @@ class YouTubeAPI:
             return None, None
 
     async def formats(self, link: str, videoid: Union[bool, str] = None):
+        import yt_dlp  # lazy: only the /formats/quality-picker path needs this
+
         if videoid:
             link = self.base + link
         if "&" in link:
@@ -450,7 +484,7 @@ class YouTubeAPI:
         
         
         try:
-            results = YoutubeSearch(link, max_results=10).to_dict()
+            results = await _search_youtube(link, 10)
             
             if not results or len(results) <= query_type:
                 return None, None, None, None
