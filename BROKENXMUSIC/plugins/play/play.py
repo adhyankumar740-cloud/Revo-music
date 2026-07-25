@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InputMediaPhoto, Message
 from pytgcalls.exceptions import NoActiveGroupCall
 from BROKENXMUSIC.utils.database import get_assistant
 import config
-from BROKENXMUSIC import Apple, Resso, SoundCloud, Spotify, Telegram, YouTube, app
+from BROKENXMUSIC import Apple, Resso, SoundCloud, Spotify, Telegram, TgScrap, YouTube, app
 from BROKENXMUSIC.core.call import Broken as JARVIS
 from BROKENXMUSIC.utils import seconds_to_min, time_to_seconds
 from BROKENXMUSIC.utils.channelplay import get_channeplayCB
@@ -344,10 +344,37 @@ async def play_commnd(
                 _["play_18"],
                 reply_markup=InlineKeyboardMarkup(buttons),
             )
-        slider = True
         query = message.text.split(None, 1)[1]
         if "-v" in query:
             query = query.replace("-v", "")
+
+        # ── Tg-Scrap: try to find + auto-play the song via the VK Music
+        # Telegram bot first. No buttons/slider — plays straight into VC.
+        if config.ENABLE_TG_SCRAP_PLAY and not video:
+            try:
+                tg_details, tg_filepath = await TgScrap.download(query)
+            except Exception:
+                tg_details = None
+            if tg_details:
+                try:
+                    await stream(
+                        _,
+                        mystic,
+                        user_id,
+                        tg_details,
+                        chat_id,
+                        user_name,
+                        message.chat.id,
+                        streamtype="tgscrap",
+                        forceplay=fplay,
+                    )
+                except Exception:
+                    await mystic.edit_text(f"❌ **Error in Tg-Scrap Stream:**\n\nTry again, after sometime")
+                    return
+                await mystic.delete()
+                return await play_logs(message, streamtype="Tg-Scrap (VK Music)")
+
+        slider = True
         try:
             details, track_id = await YouTube.track(query)
         except:
