@@ -8,7 +8,7 @@ from BROKENXMUSIC import LOGGER
 from BROKENXMUSIC.utils.formatters import check_duration, seconds_to_min
 
 logger = LOGGER("TgScrap")
-logger.info("[TgScrap] MODULE LOADED — build marker: v3-edit-recheck-fix")
+logger.info("[TgScrap] MODULE LOADED — build marker: v4-id-anchor-fix")
 
 # Downloaded songs are saved here (same folder tg-scrap's own scripts use,
 # kept for consistency even though tg-scrap's Node process isn't involved
@@ -38,25 +38,19 @@ class TgScrapAPI:
                 return client
         return None
 
-    async def _wait_for(self, client, chat_id, timeout, condition, poll_interval=1.5):
-        # Only used to exclude messages that already existed before we sent
-        # the query. Deliberately NOT used to skip messages on later polls —
-        # vkmusic_bot edits its menu message in place to attach the audio,
-        # so the same message id must be re-checked every poll or the edit
-        # (and the audio) is missed forever.
-        baseline_ids = set()
-        try:
-            async for msg in client.get_chat_history(chat_id, limit=5):
-                baseline_ids.add(msg.id)
-        except Exception:
-            pass
-
+    async def _wait_for(self, client, chat_id, timeout, condition, min_id=0, poll_interval=1.5, history_limit=30):
+        # Filter by "id > min_id" instead of scanning a fixed last-N window.
+        # The assistant's conversation with vkmusic_bot is shared across every
+        # concurrent /play request bot-wide, so under load our reply can easily
+        # get pushed past a small window before we poll. Anchoring to a real
+        # message id (our own sent message, or the menu message) survives
+        # that interleaving regardless of how much other traffic is mixed in.
         start = time.time()
         while time.time() - start < timeout:
             await asyncio.sleep(poll_interval)
             try:
-                async for msg in client.get_chat_history(chat_id, limit=5):
-                    if msg.id in baseline_ids:
+                async for msg in client.get_chat_history(chat_id, limit=history_limit):
+                    if msg.id <= min_id:
                         continue
                     if condition(msg):
                         return msg
@@ -76,8 +70,8 @@ class TgScrapAPI:
         logger.info(f"[TgScrap] Using assistant: {getattr(assistant, 'name', assistant)}")
 
         try:
-            await assistant.send_message(self.bot_username, query)
-            logger.info(f"[TgScrap] Sent query to {self.bot_username}: {query!r}")
+            sent_msg = await assistant.send_message(self.bot_username, query)
+            logger.info(f"[TgScrap] Sent query to {self.bot_username}: {query!r} (id={sent_msg.id})")
         except Exception as e:
             logger.error(f"[TgScrap] send_message failed: {e}")
             return None, None
@@ -88,6 +82,7 @@ class TgScrapAPI:
             self.menu_timeout,
             lambda m: bool(getattr(m, "reply_markup", None)
                            and getattr(m.reply_markup, "inline_keyboard", None)),
+            min_id=sent_msg.id,
         )
         if not menu_msg:
             logger.error(f"[TgScrap] No menu (inline keyboard) received within {self.menu_timeout}s for: {query!r}")
@@ -120,13 +115,16 @@ class TgScrapAPI:
             self.bot_username,
             self.audio_timeout,
             lambda m: bool(m.audio or m.voice or (m.document and "audio" in (m.document.mime_type or ""))),
+            min_id=menu_msg.id,
         )
         if not audio_msg:
             logger.error(f"[TgScrap] No audio received within {self.audio_timeout}s after click, for: {query!r}")
             # Peek at whatever DID arrive after the click, to see if it looped back to a menu/search prompt
             try:
-                async for m in assistant.get_chat_history(self.bot_username, limit=3):
-                    logger.info(f"[TgScrap] Recent msg after click -> text={m.text!r} has_menu={bool(getattr(m, 'reply_markup', None))} has_audio={bool(m.audio)}")
+                async for m in assistant.get_chat_history(self.bot_username, limit=15):
+                    if m.id <= menu_msg.id:
+                        continue
+                    logger.info(f"[TgScrap] Recent msg after click -> id={m.id} text={m.text!r} has_menu={bool(getattr(m, 'reply_markup', None))} has_audio={bool(m.audio)}")
             except Exception:
                 pass
             return None, None
