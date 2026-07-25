@@ -8,6 +8,22 @@ assistants = []
 assistantids = []
 
 
+async def _warm_dialogs(client, label):
+    """Pyrogram can't resolve a bare chat/channel ID it hasn't 'seen' yet in
+    this session (it needs the peer's access_hash). Assistants run with
+    no_updates=True so that never happens passively from incoming updates —
+    walk get_dialogs() once at startup so every channel this account is in
+    (song-cache source/cache channels included) is resolvable right away,
+    instead of a live /play command stalling on this the first time it
+    needs one of those channels."""
+    try:
+        async for _ in client.get_dialogs():
+            pass
+        LOGGER(__name__).info(f"Warmed dialog cache for {label}")
+    except Exception as e:
+        LOGGER(__name__).error(f"Failed to warm dialog cache for {label}: {e}")
+
+
 class Userbot(Client):
     def __init__(self):
         self.one = Client(
@@ -56,6 +72,7 @@ class Userbot(Client):
                 await self.one.join_chat("ABOUTBROKENX")
             except:
                 pass
+            await _warm_dialogs(self.one, "Assistant 1")
             assistants.append(1)
             try:
                 await self.one.send_message(config.LOGGER_ID, "Assistant Started")
@@ -78,6 +95,7 @@ class Userbot(Client):
                 await self.two.join_chat("ABOUTBROKENX")
             except:
                 pass
+            await _warm_dialogs(self.two, "Assistant 2")
             assistants.append(2)
             try:
                 await self.two.send_message(config.LOGGER_ID, "Assistant Started")
@@ -100,6 +118,7 @@ class Userbot(Client):
                 await self.three.join_chat("ABOUTBROKENX")
             except:
                 pass
+            await _warm_dialogs(self.three, "Assistant 3")
             assistants.append(3)
             try:
                 await self.three.send_message(config.LOGGER_ID, "Assistant Started")
@@ -122,6 +141,7 @@ class Userbot(Client):
                 await self.four.join_chat("ABOUTBROKENX")
             except:
                 pass
+            await _warm_dialogs(self.four, "Assistant 4")
             assistants.append(4)
             try:
                 await self.four.send_message(config.LOGGER_ID, "Assistant Started")
@@ -144,6 +164,7 @@ class Userbot(Client):
                 await self.five.join_chat("ABOUTBROKENX")
             except:
                 pass
+            await _warm_dialogs(self.five, "Assistant 5")
             assistants.append(5)
             try:
                 await self.five.send_message(config.LOGGER_ID, "Assistant Started")
