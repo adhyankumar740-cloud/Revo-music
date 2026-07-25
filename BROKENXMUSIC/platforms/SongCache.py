@@ -122,13 +122,16 @@ class SongCacheAPI:
             logger.info(f"[SongCache] Exact cache hit: {norm!r}")
             return entry
 
-        # Loose fallback: word-subset match. Cheap and good enough for
-        # "tum hi ho" matching an index entry "arijit singh tum hi ho".
+        # Loose fallback: word-subset match, ANY order. Cheap and good
+        # enough for "tum hi ho" matching an index entry "arijit singh tum
+        # hi ho", and also for "hi ho tum" (word order in the query
+        # doesn't have to match the stored title's word order).
         words = [w for w in norm.split() if len(w) > 2]
         if not words:
             return None
-        pattern = ".*".join(re.escape(w) for w in words)
-        entry = await songcachedb.find_one({"normalized": {"$regex": pattern}})
+        entry = await songcachedb.find_one(
+            {"normalized": {"$all": [re.compile(re.escape(w)) for w in words]}}
+        )
         if entry:
             logger.info(f"[SongCache] Fuzzy cache hit: {norm!r} -> {entry.get('normalized')!r}")
         return entry
@@ -305,6 +308,12 @@ class SongCacheAPI:
                     if not title:
                         title = getattr(audio, "file_name", None) or (msg.caption or "").strip()
                     if not title:
+                        logger.info(
+                            f"[SongCache] Skipped msg_id={msg.id} in {channel}: "
+                            f"audio has no performer/title tag, no filename, and no "
+                            f"caption — nothing to search it by. Add a caption to "
+                            f"index it."
+                        )
                         continue
 
                     norm = normalize(title)
