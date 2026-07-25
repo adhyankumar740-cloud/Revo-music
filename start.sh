@@ -1,9 +1,6 @@
 #!/bin/bash
 echo "🔑 Authorizing Telegram Bot..."
 
-# Dummy port for Render's Web Service port scan — bot itself doesn't need this.
-python3 keepalive.py &
-
 while true; do
     output=$(python3 -m BROKENXMUSIC 2>&1 | tee /tmp/last_run.log)
     wait_time=$(echo "$output" | grep -oP "A wait of \K[0-9]+(?= seconds)")
