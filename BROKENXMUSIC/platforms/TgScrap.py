@@ -8,6 +8,7 @@ from BROKENXMUSIC import LOGGER
 from BROKENXMUSIC.utils.formatters import check_duration, seconds_to_min
 
 logger = LOGGER("TgScrap")
+logger.info("[TgScrap] MODULE LOADED — build marker: v3-edit-recheck-fix")
 
 # Downloaded songs are saved here (same folder tg-scrap's own scripts use,
 # kept for consistency even though tg-scrap's Node process isn't involved
