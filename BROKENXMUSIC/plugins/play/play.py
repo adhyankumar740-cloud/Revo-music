@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InputMediaPhoto, Message
 from pytgcalls.exceptions import NoActiveGroupCall
 from BROKENXMUSIC.utils.database import get_assistant
 import config
-from BROKENXMUSIC import Apple, Resso, SoundCloud, SongCache, Spotify, Telegram, TgScrap, YouTube, app
+from BROKENXMUSIC import Apple, CDNCache, Resso, SoundCloud, SongCache, Spotify, Telegram, TgScrap, YouTube, app
 from BROKENXMUSIC.core.call import Broken as JARVIS
 from BROKENXMUSIC.utils import seconds_to_min, time_to_seconds
 from BROKENXMUSIC.utils.channelplay import get_channeplayCB
@@ -353,17 +353,29 @@ async def play_commnd(
         # Telegram bot first. No buttons/slider — plays straight into VC.
         if config.ENABLE_TG_SCRAP_PLAY and not video:
             tg_details, tg_filepath = None, None
+            from_cdn = False
+
+            # CDN Cache: fastest possible path — a hit here means literally
+            # zero download, the CDN URL goes straight to pytgcalls as-is.
+            if config.ENABLE_CDN_CACHE:
+                try:
+                    cdn_hit = await CDNCache.get(query)
+                except Exception:
+                    cdn_hit = None
+                if cdn_hit:
+                    tg_details = cdn_hit  # tg_filepath stays None — nothing local was downloaded
+                    from_cdn = True
 
             # Song Cache: check our own channels first — instant, no
             # vkmusic_bot round-trip at all.
-            cache_hit = await SongCache.search(query)
+            cache_hit = None if tg_details else await SongCache.search(query)
             if cache_hit:
                 try:
-                    tg_details, tg_filepath = await SongCache.fetch_file(cache_hit)
+                    tg_details, tg_filepath = await SongCache.stream_or_fetch(cache_hit)
                 except Exception:
                     tg_details, tg_filepath = None, None
 
-            from_cache = bool(tg_details)
+            from_cache = bool(tg_details) and not from_cdn
 
             if not tg_details:
                 try:
@@ -380,6 +392,24 @@ async def play_commnd(
                         )
                     except Exception:
                         pass
+
+            # Whatever local file we ended up with (from SongCache or
+            # TgScrap — never on a CDN hit, there's no local file then),
+            # mirror it to the CDN in the background so the *next* request
+            # for this song is a zero-download CDN hit. Fire-and-forget so
+            # this never adds latency to the current play.
+            if (
+                tg_details
+                and tg_filepath
+                and not from_cdn
+                and not tg_filepath.endswith(".fifo")
+                and config.ENABLE_CDN_CACHE
+            ):
+                asyncio.create_task(
+                    CDNCache.add(
+                        query, tg_filepath, tg_details["title"], tg_details["duration_min"]
+                    )
+                )
 
             if tg_details:
                 try:
@@ -398,7 +428,8 @@ async def play_commnd(
                     await mystic.edit_text(f"❌ **Error in Tg-Scrap Stream:**\n\nTry again, after sometime")
                     return
                 await mystic.delete()
-                return await play_logs(message, streamtype="Song Cache" if from_cache else "Tg-Scrap (VK Music)")
+                label = "CDN Cache" if from_cdn else ("Song Cache" if from_cache else "Tg-Scrap (VK Music)")
+                return await play_logs(message, streamtype=label)
 
         slider = True
         try:
