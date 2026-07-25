@@ -65,11 +65,41 @@ async def _resolve_client(client_no=None):
     return app, None
 
 
+
+# Same idea as Youtube.py's _NOISE_PATTERNS — strip the boilerplate that
+# tends to differ between "how the user typed the query" and "how the
+# source video/audio was actually titled" (channel spam, quality tags,
+# featured-artist junk, etc). Applied BEFORE the alnum collapse below so a
+# match doesn't hinge on the requester's guess of that boilerplate.
+_NOISE_PATTERNS = [
+    r"\(.*?\)",
+    r"\[.*?\]",
+    r"\|.*",
+    r"[-–—:]\s*full\s+(video\s+)?song.*",
+    r"\bofficial\s+(music\s+)?video\b",
+    r"\bofficial\s+audio\b",
+    r"\bfull\s+video\s+song\b",
+    r"\bfull\s+video\b",
+    r"\bfull\s+song\b",
+    r"\bwith\s+lyrics?\b",
+    r"\blyric\s+video\b",
+    r"\blyrics?\b",
+    r"\bvideo\s+song\b",
+    r"\baudio\s+song\b",
+    r"\b(hd|4k|8k|1080p|720p)\b",
+]
+
+
 def normalize(title: str) -> str:
-    """Collapse a title down to a bare comparable form: lowercase, only
-    alphanumerics and spaces. 'Arijit Singh - Tum Hi Ho!' and 'tum hi ho'
-    both normalize to 'tum hi ho', 'arijit singh tum hi ho' etc."""
-    q = (title or "").lower()
+    """Collapse a title down to a bare comparable form: strip noisy
+    boilerplate (quality tags, "| Movie Name", "(Official Video)", ...),
+    lowercase, then keep only alphanumerics and spaces. 'Arijit Singh -
+    Tum Hi Ho (Official Video) 4K' and 'tum hi ho' both normalize to
+    'tum hi ho' / 'arijit singh tum hi ho'."""
+    q = (title or "")
+    for pat in _NOISE_PATTERNS:
+        q = re.sub(pat, "", q, flags=re.IGNORECASE)
+    q = q.lower()
     q = re.sub(r"[^a-z0-9]+", " ", q)
     return re.sub(r"\s+", " ", q).strip()
 
