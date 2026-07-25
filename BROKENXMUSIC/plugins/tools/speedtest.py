@@ -1,6 +1,5 @@
 import asyncio
 
-import speedtest
 from pyrogram import filters
 from pyrogram.types import Message
 
@@ -10,6 +9,8 @@ from BROKENXMUSIC.utils.decorators.language import language
 
 
 def testspeed(m, _):
+    import speedtest  # lazy: only pulled into memory if /speedtest is actually run
+
     try:
         test = speedtest.Speedtest()
         test.get_best_server()
