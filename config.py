@@ -23,6 +23,7 @@ ENABLE_TG_SCRAP_PLAY = getenv("ENABLE_TG_SCRAP_PLAY", "True").lower() == "true"
 VK_MUSIC_BOT = getenv("VK_MUSIC_BOT", "vkmusic_bot")
 TG_SCRAP_MENU_TIMEOUT = int(getenv("TG_SCRAP_MENU_TIMEOUT", 15))  # wait for the bot's results menu
 TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 30))  # wait for the audio file after clicking
+TG_SCRAP_MAX_MENU_HOPS = int(getenv("TG_SCRAP_MAX_MENU_HOPS", 3))  # nested menus to click through
 
 # ⚠️ Your own archived channels (the ones you've been building up for years).
 # Comma separated list of usernames / numeric chat ids, e.g.
