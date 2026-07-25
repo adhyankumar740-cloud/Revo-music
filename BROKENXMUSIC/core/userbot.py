@@ -32,6 +32,7 @@ class Userbot(Client):
             api_hash=config.API_HASH,
             session_string=str(config.STRING1),
             no_updates=True,
+            workers=1,
         )
         self.two = Client(
             name="Brokenxass2",
@@ -39,6 +40,7 @@ class Userbot(Client):
             api_hash=config.API_HASH,
             session_string=str(config.STRING2),
             no_updates=True,
+            workers=1,
         )
         self.three = Client(
             name="Brokenxass3",
@@ -46,6 +48,7 @@ class Userbot(Client):
             api_hash=config.API_HASH,
             session_string=str(config.STRING3),
             no_updates=True,
+            workers=1,
         )
         self.four = Client(
             name="Brokenxass4",
@@ -53,6 +56,7 @@ class Userbot(Client):
             api_hash=config.API_HASH,
             session_string=str(config.STRING4),
             no_updates=True,
+            workers=1,
         )
         self.five = Client(
             name="Brokenxass5",
@@ -60,6 +64,7 @@ class Userbot(Client):
             api_hash=config.API_HASH,
             session_string=str(config.STRING5),
             no_updates=True,
+            workers=1,
         )
 
     async def start(self):
