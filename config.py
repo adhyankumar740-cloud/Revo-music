@@ -45,6 +45,16 @@ SONG_CACHE_SOURCE_CHANNELS = [
 # Every song freshly pulled via TgScrap gets uploaded here and indexed, so the
 # next request for it is an instant file_id-based hit — no re-download.
 ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "True").lower() == "true"
+
+# ⚠️ OPTIONAL fast-path: try yt-dlp directly (with a cookies.txt file) BEFORE
+# falling back to TgScrap. OFF by default — the existing TgScrap flow is
+# completely unaffected unless you explicitly turn this on. To disable again,
+# just set this back to False (or delete the env var) — nothing else to undo.
+ENABLE_YTDLP_DIRECT_AUDIO = getenv("ENABLE_YTDLP_DIRECT_AUDIO", "False").lower() == "true"
+# Path to a Netscape-format cookies.txt (exported from a logged-in YouTube
+# browser session). Leave blank to try yt-dlp without cookies (works less
+# reliably on cloud/datacenter IPs).
+YTDLP_COOKIES_FILE = getenv("YTDLP_COOKIES_FILE", "cookies.txt")
 # CDN Cache is an unfinished feature (no CDNCache module exists yet) — keep off.
 ENABLE_CDN_CACHE = getenv("ENABLE_CDN_CACHE", "False").lower() == "true"
 _raw_song_cache_channel = getenv("SONG_CACHE_CHANNEL", "").strip()
