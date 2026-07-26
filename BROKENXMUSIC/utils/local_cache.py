@@ -32,6 +32,13 @@ logger = LOGGER("LocalCache")
 CACHE_DIR = os.path.join(os.getcwd(), "tg-scrap", "downloads", "local_cache")
 INDEX_PATH = os.path.join(CACHE_DIR, "_index.json")
 
+# A "successful" download/stream that's actually empty or truncated (e.g.
+# FILE_REFERENCE_EXPIRED mid-stream, or a probe that returned zero chunks)
+# must never be promoted into the local cache — Tier 0 hits skip Telegram
+# entirely, so a corrupt file cached here breaks that song's playback
+# permanently until manually evicted, not just for this one request.
+MIN_VALID_AUDIO_BYTES = 8192
+
 _lock = asyncio.Lock()
 _index = None  # lazy-loaded
 
@@ -120,7 +127,20 @@ async def put(key: str, src_path: str):
     try:
         if not await asyncio.to_thread(os.path.exists, src_path):
             return
+        src_size = await asyncio.to_thread(os.path.getsize, src_path)
     except Exception:
+        return
+
+    # Never promote an empty/truncated source (corrupt download, aborted
+    # stream, expired file reference that yielded zero real chunks) into
+    # the trusted disk cache — a bad file here silently breaks that song
+    # for every future play, forever, since Tier 0 hits skip Telegram
+    # entirely and there's no other validation downstream of a cache hit.
+    if src_size < MIN_VALID_AUDIO_BYTES:
+        logger.error(
+            f"[LocalCache] Refusing to cache {key!r}: source is only "
+            f"{src_size} bytes (< {MIN_VALID_AUDIO_BYTES}) — looks corrupt/empty."
+        )
         return
 
     async with _lock:
@@ -133,6 +153,17 @@ async def put(key: str, src_path: str):
             size = await asyncio.to_thread(os.path.getsize, dest)
         except Exception as e:
             logger.error(f"[LocalCache] Could not store {key!r}: {e}")
+            return
+
+        if size < MIN_VALID_AUDIO_BYTES:
+            logger.error(
+                f"[LocalCache] Refusing to cache {key!r}: copied file is only "
+                f"{size} bytes — looks corrupt/empty."
+            )
+            try:
+                await asyncio.to_thread(os.remove, dest)
+            except Exception:
+                pass
             return
 
         idx[key] = {"path": dest, "size": size, "last_used": time.time()}
