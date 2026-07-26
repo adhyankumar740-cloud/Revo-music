@@ -5,7 +5,7 @@ from pyrogram import idle
 from pytgcalls.exceptions import NoActiveGroupCall
 
 import config
-from BROKENXMUSIC import LOGGER, app, userbot
+from BROKENXMUSIC import LOGGER, SongCache, app, userbot
 from BROKENXMUSIC.core.call import Broken
 from BROKENXMUSIC.misc import sudo
 from BROKENXMUSIC.plugins import ALL_MODULES
