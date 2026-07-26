@@ -146,7 +146,8 @@ async def put(key: str, src_path: str):
     async with _lock:
         idx = _load_index()
         os.makedirs(CACHE_DIR, exist_ok=True)
-        dest = os.path.join(CACHE_DIR, f"{_safe_name(key)}.mp3")
+        _, src_ext = os.path.splitext(src_path)
+        dest = os.path.join(CACHE_DIR, f"{_safe_name(key)}{src_ext or '.mp3'}")
         try:
             if os.path.abspath(src_path) != os.path.abspath(dest):
                 await asyncio.to_thread(shutil.copyfile, src_path, dest)
