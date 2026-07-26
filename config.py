@@ -55,6 +55,25 @@ SONG_CACHE_CHANNEL = _normalize_channel(_raw_song_cache_channel) if _raw_song_ca
 # was triggering long, invisible FloodWait sleeps. 0 = no limit (old
 # behaviour) — override per-run with "/indexcache <number>".
 SONG_CACHE_INDEX_LIMIT = int(getenv("SONG_CACHE_INDEX_LIMIT", 1000))
+# Optional: pin ONE assistant (1-5) to always handle /indexcache, so a big
+# indexing run never competes with live /play requests for the same
+# account. Leave unset to use the old "just grab whichever assistant"
+# behaviour. Only matters if you run 2+ assistants (STRING1 + STRING2 ...).
+SONG_CACHE_INDEX_ASSISTANT = getenv("SONG_CACHE_INDEX_ASSISTANT")
+SONG_CACHE_INDEX_ASSISTANT = (
+    int(SONG_CACHE_INDEX_ASSISTANT) if SONG_CACHE_INDEX_ASSISTANT and SONG_CACHE_INDEX_ASSISTANT.isdigit() else None
+)
+
+# Local disk LRU cache: once a song (cache-channel hit OR a fresh VK-scrape)
+# has been pulled once on this server, keep a copy on local disk so a
+# repeat request for the same song skips Telegram entirely — no download,
+# no network round-trip, just an instant local file. Oldest entries are
+# evicted once the folder passes LOCAL_CACHE_MAX_MB.
+LOCAL_CACHE_ENABLED = getenv("LOCAL_CACHE_ENABLED", "True").lower() == "true"
+# Render free tier's disk is small + ephemeral (wiped on every restart) —
+# 400MB keeps this a light bonus layer instead of competing with your app
+# for the little disk space free tier gives you.
+LOCAL_CACHE_MAX_MB = int(getenv("LOCAL_CACHE_MAX_MB", 400))
 
 # Chat id of a group for logging bot's activities
 LOGGER_ID = int(getenv("LOGGER_ID", -1002094142057)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
