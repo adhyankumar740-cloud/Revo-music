@@ -124,7 +124,7 @@ async def _download_audio_ytdlp(video_id: str) -> str:
         "format": "bestaudio/best",
         "outtmpl": os.path.join("downloads", f"{video_id}.%(ext)s"),
         "quiet": True,
-        "no_warnings": False,  # temporarily surfaced for debugging — see note above
+        "no_warnings": True,
         "noplaylist": True,
         # Required so yt-dlp can fetch its JS challenge-solver script (runs
         # via the Deno runtime installed in the Dockerfile). Without this,
@@ -165,9 +165,11 @@ async def _download_audio_ytdlp(video_id: str) -> str:
 
 async def download_song(link: str) -> str:
     """
-    Audio downloads check the Song Cache (your own channels) first, then
-    fall back to Tg-Scrap (VK-Music-style Telegram bot, driven by our own
-    userbot) instead of the old BrokenXAPI service.
+    Audio downloads: local disk cache first (plain files, no Mongo/Telegram
+    round-trip), then yt-dlp direct (fast path), then Tg-Scrap as the last
+    resort. Any successful download is handed back for playback IMMEDIATELY
+    — caching it for next time happens in a background task afterwards, so
+    it never adds latency to the current play.
     """
     video_id = _extract_video_id(link)
     logger = LOGGER("TgScrap/Youtube.py")
@@ -183,8 +185,30 @@ async def download_song(link: str) -> str:
     query = _clean_query(raw_title)
     logger.info(f"🔎 [AUDIO] Raw title: '{raw_title}' -> cleaned query: '{query}'")
 
-    # Song Cache: check our own channels first — instant, no vkmusic_bot
-    # round-trip at all.
+    # Plain local disk cache — no Mongo, no Telegram, just a filesystem
+    # read. Checked first regardless of the (now-optional, off-by-default)
+    # SongCache system below.
+    from BROKENXMUSIC.utils import local_cache
+    try:
+        cached_path = await local_cache.get(query) or await local_cache.get(raw_title)
+        if cached_path:
+            logger.info(f"✅ [AUDIO] Local disk cache hit: {query!r}")
+            return cached_path
+    except Exception as e:
+        logger.error(f"❌ [AUDIO] Local cache lookup failed: {e}")
+
+    def _cache_in_background(key: str, path: str):
+        """Fire-and-forget: never let caching delay handing the file back."""
+        async def _do():
+            try:
+                await local_cache.put(key, path)
+            except Exception as e:
+                logger.error(f"❌ [AUDIO] Background local cache save failed for {key!r}: {e}")
+        asyncio.create_task(_do())
+
+    # Optional legacy path: Mongo+Telegram channel cache. OFF by default
+    # now (config.ENABLE_SONG_CACHE=False) — set it True again to restore
+    # the old behaviour, nothing else to change.
     if config.ENABLE_SONG_CACHE:
         from BROKENXMUSIC import SongCache
         try:
@@ -197,23 +221,18 @@ async def download_song(link: str) -> str:
         except Exception as e:
             logger.error(f"❌ [AUDIO] Song Cache lookup failed: {e}")
 
-    # Optional fast path: try yt-dlp+cookies directly before the slower
-    # TgScrap round-trip. Only runs if explicitly enabled in config/.env.
+    # Primary path: yt-dlp + cookies (fast — a couple of seconds).
     if getattr(config, "ENABLE_YTDLP_DIRECT_AUDIO", False):
         try:
             ytdlp_path = await _download_audio_ytdlp(video_id)
             if ytdlp_path and os.path.exists(ytdlp_path):
                 logger.info(f"✅ [AUDIO] yt-dlp direct hit: {video_id}")
-                if config.ENABLE_SONG_CACHE and config.SONG_CACHE_CHANNEL:
-                    from BROKENXMUSIC import SongCache
-                    try:
-                        await SongCache.save_to_cache(query, ytdlp_path, raw_title, "0:00")
-                    except Exception as e:
-                        logger.error(f"❌ [AUDIO] Song Cache save (yt-dlp path) failed: {e}")
+                _cache_in_background(query, ytdlp_path)
                 return ytdlp_path
         except Exception as e:
             logger.error(f"❌ [AUDIO] yt-dlp direct fast path failed, falling back to TgScrap: {e}")
 
+    # Last resort: TgScrap (VK-Music-style bot scrape via userbot).
     try:
         track_details, filepath = await _tgscrap.download(query)
     except Exception as e:
@@ -233,15 +252,7 @@ async def download_song(link: str) -> str:
         return None
 
     logger.info(f"✅ [AUDIO] TgScrap download complete: {query}")
-
-    # Grow the cache so the next request for this song is instant.
-    if config.ENABLE_SONG_CACHE and config.SONG_CACHE_CHANNEL:
-        from BROKENXMUSIC import SongCache
-        try:
-            await SongCache.save_to_cache(query, filepath, track_details["title"], track_details["duration_min"])
-        except Exception as e:
-            logger.error(f"❌ [AUDIO] Song Cache save failed: {e}")
-
+    _cache_in_background(query, filepath)
     return filepath
 
 
