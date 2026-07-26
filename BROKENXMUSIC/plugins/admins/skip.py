@@ -114,11 +114,25 @@ async def skip(cli, message: Message, _, chat_id):
             await Broken.skip_stream(chat_id, link, video=status, image=image)
         except:
             return await message.reply_text(_["call_6"])
+        # --- OLD (thumbnail) VERSION — kept for future rollback ---
+        # img = await get_thumb(videoid)
+        # button = stream_markup(_, chat_id)
+        # run = await message.reply_photo(
+        #     photo=img,
+        #     caption=_["stream_1"].format(
+        #         f"https://t.me/{app.username}?start=info_{videoid}",
+        #         title[:23],
+        #         check[0]["dur"],
+        #         user,
+        #     ),
+        #     reply_markup=InlineKeyboardMarkup(button),
+        # )
+        # db[chat_id][0]["mystic"] = run
+        # db[chat_id][0]["markup"] = "tg"
+        # --- NEW (fast, no-thumbnail) VERSION ---
         button = stream_markup(_, chat_id)
-        img = await get_thumb(videoid)
-        run = await message.reply_photo(
-            photo=img,
-            caption=_["stream_1"].format(
+        run = await message.reply_text(
+            text=_["stream_1"].format(
                 f"https://t.me/{app.username}?start=info_{videoid}",
                 title[:23],
                 check[0]["dur"],
@@ -147,11 +161,25 @@ async def skip(cli, message: Message, _, chat_id):
             await Broken.skip_stream(chat_id, file_path, video=status, image=image)
         except:
             return await mystic.edit_text(_["call_6"])
+        # --- OLD (thumbnail) VERSION — kept for future rollback ---
+        # img = await get_thumb(videoid)
+        # button = stream_markup(_, chat_id)
+        # run = await message.reply_photo(
+        #     photo=img,
+        #     caption=_["stream_1"].format(
+        #         f"https://t.me/{app.username}?start=info_{videoid}",
+        #         title[:23],
+        #         check[0]["dur"],
+        #         user,
+        #     ),
+        #     reply_markup=InlineKeyboardMarkup(button),
+        # )
+        # db[chat_id][0]["mystic"] = run
+        # db[chat_id][0]["markup"] = "stream"
+        # --- NEW (fast, no-thumbnail) VERSION ---
         button = stream_markup(_, chat_id)
-        img = await get_thumb(videoid)
-        run = await message.reply_photo(
-            photo=img,
-            caption=_["stream_1"].format(
+        run = await message.reply_text(
+            text=_["stream_1"].format(
                 f"https://t.me/{app.username}?start=info_{videoid}",
                 title[:23],
                 check[0]["dur"],
@@ -216,11 +244,25 @@ async def skip(cli, message: Message, _, chat_id):
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
         else:
+            # --- OLD (thumbnail) VERSION — kept for future rollback ---
+            # img = await get_thumb(videoid)
+            # button = stream_markup(_, chat_id)
+            # run = await message.reply_photo(
+            #     photo=img,
+            #     caption=_["stream_1"].format(
+            #         f"https://t.me/{app.username}?start=info_{videoid}",
+            #         title[:23],
+            #         check[0]["dur"],
+            #         user,
+            #     ),
+            #     reply_markup=InlineKeyboardMarkup(button),
+            # )
+            # db[chat_id][0]["mystic"] = run
+            # db[chat_id][0]["markup"] = "stream"
+            # --- NEW (fast, no-thumbnail) VERSION ---
             button = stream_markup(_, chat_id)
-            img = await get_thumb(videoid)
-            run = await message.reply_photo(
-                photo=img,
-                caption=_["stream_1"].format(
+            run = await message.reply_text(
+                text=_["stream_1"].format(
                     f"https://t.me/{app.username}?start=info_{videoid}",
                     title[:23],
                     check[0]["dur"],
