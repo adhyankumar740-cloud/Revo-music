@@ -126,6 +126,10 @@ async def _download_audio_ytdlp(video_id: str) -> str:
         "quiet": True,
         "no_warnings": False,  # temporarily surfaced for debugging — see note above
         "noplaylist": True,
+        # Required so yt-dlp can fetch its JS challenge-solver script (runs
+        # via the Deno runtime installed in the Dockerfile). Without this,
+        # Deno is present but unused and YouTube only returns image formats.
+        "remote_components": ["ejs:github"],
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
         ],
