@@ -112,16 +112,27 @@ def _clean_query(title: str) -> str:
 # Self-contained on purpose: if this misbehaves, set config.ENABLE_YTDLP_DIRECT_AUDIO
 # back to False (or delete this whole block + its one call-site below) and
 # everything reverts to the original SongCache -> TgScrap flow untouched.
+def _find_downloaded(video_id: str):
+    """Return whichever downloads/{video_id}.* file exists, any extension."""
+    import glob
+    matches = glob.glob(os.path.join("downloads", f"{video_id}.*"))
+    # Ignore stray partial/temp files yt-dlp sometimes leaves behind.
+    matches = [m for m in matches if not m.endswith((".part", ".ytdl", ".temp"))]
+    return matches[0] if matches else None
+
+
 async def _download_audio_ytdlp(video_id: str) -> str:
     logger = LOGGER("YtDlpDirect/Youtube.py")
-    file_path = os.path.join("downloads", f"{video_id}.mp3")
 
-    if os.path.exists(file_path):
-        return file_path
+    existing = _find_downloaded(video_id)
+    if existing:
+        return existing
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     ytdl_opts = {
-        "format": "bestaudio/best",
+        # m4a preferred: no re-encode needed and it's what pytgcalls/ffmpeg
+        # plays natively. Falls back to whatever's best if m4a isn't offered.
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": os.path.join("downloads", f"{video_id}.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
@@ -130,9 +141,21 @@ async def _download_audio_ytdlp(video_id: str) -> str:
         # via the Deno runtime installed in the Dockerfile). Without this,
         # Deno is present but unused and YouTube only returns image formats.
         "remote_components": ["ejs:github"],
-        "postprocessors": [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
-        ],
+        # yt-dlp's default player_client list is "android_vr,web,web_safari".
+        # android_vr needs NO JS challenge solving at all, but web/web_safari
+        # do — and yt-dlp still queries those too, each one spinning up Deno
+        # to solve YouTube's signature challenge. That's the ~50s+ delay
+        # between "Starting download" and "download complete" in the logs.
+        # Forcing android_vr only skips the JS solver entirely for the
+        # common case (audio-only download), cutting extraction to ~1-3s.
+        "extractor_args": {"youtube": {"player_client": ["android_vr"]}},
+        "socket_timeout": 15,
+        # NO postprocessors here on purpose. FFmpegExtractAudio->mp3 was a
+        # full audio re-encode of the whole track (several more seconds,
+        # scaling with song length + CPU load) that bought nothing: ffmpeg
+        # (both yt-dlp's own and pytgcalls' at playback time) plays m4a/opus
+        # directly, no mp3 conversion required. Serving the raw bestaudio
+        # file as-is is what actually gets playback started within seconds.
     }
 
     cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
@@ -151,9 +174,10 @@ async def _download_audio_ytdlp(video_id: str) -> str:
 
         await loop.run_in_executor(None, _run)
 
-        if os.path.exists(file_path):
+        result = _find_downloaded(video_id)
+        if result:
             logger.info(f"✅ [YTDLP-DIRECT] download complete: {video_id}")
-            return file_path
+            return result
 
         logger.error(f"❌ [YTDLP-DIRECT] file not found after download: {video_id}")
         return None
