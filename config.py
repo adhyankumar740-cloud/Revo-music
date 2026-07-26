@@ -64,6 +64,21 @@ SONG_CACHE_INDEX_ASSISTANT = (
     int(SONG_CACHE_INDEX_ASSISTANT) if SONG_CACHE_INDEX_ASSISTANT and SONG_CACHE_INDEX_ASSISTANT.isdigit() else None
 )
 
+# Optional: dedicate ONE assistant purely to joining voice chats + actually
+# streaming audio into them. That account's Pyrogram connection is then
+# NEVER used for TgScrap (VK-bot scraping) or SongCache file fetching/
+# indexing — those all run on the OTHER assistants instead (round-robin
+# across whichever ones are left, see SongCache._live_pool). This keeps the
+# playback assistant free to instantly join new calls instead of being busy
+# mid-download when a new /play comes in.
+# Default "1" (matches STRING_SESSION). Needs 2+ assistants configured to
+# actually matter — with only 1 assistant, it obviously has to do everything.
+# Set to "" / unset to go back to the old fully-random assistant-per-chat behaviour.
+DEDICATED_PLAY_ASSISTANT = getenv("DEDICATED_PLAY_ASSISTANT", "1")
+DEDICATED_PLAY_ASSISTANT = (
+    int(DEDICATED_PLAY_ASSISTANT) if DEDICATED_PLAY_ASSISTANT and DEDICATED_PLAY_ASSISTANT.isdigit() else None
+)
+
 # Local disk LRU cache: once a song (cache-channel hit OR a fresh VK-scrape)
 # has been pulled once on this server, keep a copy on local disk so a
 # repeat request for the same song skips Telegram entirely — no download,
