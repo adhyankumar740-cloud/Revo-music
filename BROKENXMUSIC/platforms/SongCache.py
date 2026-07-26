@@ -42,9 +42,17 @@ _live_pool_cycle = None
 
 
 def _live_pool():
-    reserved = config.SONG_CACHE_INDEX_ASSISTANT
-    pool = [a for a in assistants if a != reserved] or list(assistants)
-    return pool
+    # Exclude both the /indexcache-reserved assistant AND the dedicated
+    # playback assistant (config.DEDICATED_PLAY_ASSISTANT) from the pool
+    # used for SongCache file fetches — that keeps the playback account's
+    # connection free for voice-chat joins/streaming only. Whatever's left
+    # (assistant 2, 3, 4... in a typical setup) round-robins the fetch work,
+    # so with 3+ assistants those fetches actually run in parallel across
+    # more than one account instead of all queueing on a single one.
+    reserved = {config.SONG_CACHE_INDEX_ASSISTANT, config.DEDICATED_PLAY_ASSISTANT}
+    reserved.discard(None)
+    pool = [a for a in assistants if a not in reserved]
+    return pool or list(assistants)
 
 
 def _next_live_assistant():
