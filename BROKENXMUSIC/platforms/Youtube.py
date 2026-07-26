@@ -115,79 +115,96 @@ async def _get_stream_url_ytdlp(video_id: str):
     at all. pytgcalls/ffmpeg then reads and decodes that URL live as the
     group call plays it, exactly like this bot's existing M3U8/"index link"
     direct-URL playback already does (see _build_stream / join_call).
-    That means playback can start within a second or two of resolving the
-    URL, instead of waiting for the whole track to land on disk first.
 
-    Risk (by design, accepted): this URL is short-lived and tied to the
-    session/IP that requested it. If YouTube expires or throttles it
-    mid-play, playback can stall or 403 partway through a song — unlike a
-    downloaded file, which always plays start-to-finish once it exists.
+    Speed tiers, cheapest first — each one only runs if the previous one
+    genuinely fails, so the common case pays for tier 1 only:
+      1. android_vr, no cookies   -> no JS-challenge, no auth. Fastest path,
+         works for the vast majority of videos.
+      2. android_vr, with cookies -> only tried if tier 1 hit YouTube's
+         "Sign in to confirm you're not a bot" bot-check (common on shared
+         Render IPs). Still no JS-challenge, just adds auth.
+      3. web_embedded + web, with cookies -> last resort for videos
+         android_vr can never resolve (age/region-restricted, made-for-kids,
+         etc). This is the only tier that pays the Deno JS-challenge cost
+         (~11s on Render's free-tier CPU).
 
-    TEMP DIAGNOSTIC MODE: verbose=True + a logger that routes every yt-dlp
-    internal line (webpage fetch, which player_client is being tried,
-    JS-challenge solving, etc.) through our own timestamped logger. Two
-    guesses (EJS-from-GitHub, cold-start) already turned out to be wrong/
-    incomplete — this makes the next log paste show EXACTLY which step
-    the ~20s is going into instead of guessing a third time. Safe to
-    revert to quiet/no_warnings once the real bottleneck is confirmed.
+    Diagnostic verbose/debug logging has been removed on purpose — it was
+    temporary instrumentation used to find the original ~20s bottleneck
+    (confirmed: cookies forcing web_embedded/web + JS-challenge solving).
+    Routing every yt-dlp internal line through our logger added its own
+    I/O overhead, so it's off now that the cause is known.
     """
     logger = LOGGER("YtDlpDirect/Youtube.py")
-
-    class _YtdlpDebugLogger:
-        def debug(self, msg):
-            logger.info(f"[yt-dlp] {msg}")
-
-        def warning(self, msg):
-            logger.warning(f"[yt-dlp] {msg}")
-
-        def error(self, msg):
-            logger.error(f"[yt-dlp] {msg}")
-
     url = f"https://www.youtube.com/watch?v={video_id}"
-    ytdl_opts = {
+
+    base_opts = {
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "quiet": True,
-        "no_warnings": False,
-        "verbose": True,
-        "logger": _YtdlpDebugLogger(),
+        "no_warnings": True,
         "noplaylist": True,
+        "socket_timeout": 15,
         # NOTE: no "remote_components": ["ejs:github"] here on purpose —
         # that fetched the JS solver from GitHub over the network on the
         # FIRST YouTube request after every cold start/restart (~15-20s on
         # Render's network, matching the delay you saw). requirements.txt
         # now installs "yt-dlp[default]", which bundles the solver into the
         # package at BUILD time instead, so there's no runtime fetch at all.
-        "extractor_args": {"youtube": {"player_client": ["android_vr", "web_embedded", "web"]}},
-        "socket_timeout": 15,
-        # NOTE: deliberately NOT reading config.YTDLP_COOKIES_FILE here.
-        # yt-dlp skips "android_vr" the moment cookies are present ("Skipping
-        # client 'android_vr' since it does not support cookies"), which
-        # forces web_embedded/web — both of which need YouTube's signature
-        # JS challenge solved via Deno (~11s on Render's free-tier CPU, per
-        # the 15:31:28 -> 15:31:39 log window). android_vr needs no JS
-        # solving at all, so this fast-path stays cookie-free on purpose to
-        # keep that client in play. The cookie-using slow path is
-        # _download_audio_ytdlp below, kept separate for videos android_vr
-        # can't resolve.
     }
 
+    loop = asyncio.get_event_loop()
+
+    def _run(opts):
+        import yt_dlp
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return info.get("url") if info else None
+
+    cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
+    has_cookies = bool(cookies_path and os.path.exists(cookies_path))
+
+    # Tier 1: android_vr only, no cookies — fastest possible path.
+    tier1_opts = {**base_opts, "extractor_args": {"youtube": {"player_client": ["android_vr"]}}}
     try:
-        loop = asyncio.get_event_loop()
-
-        def _run():
-            import yt_dlp
-            with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                return info.get("url") if info else None
-
-        stream_url = await loop.run_in_executor(None, _run)
+        stream_url = await loop.run_in_executor(None, _run, tier1_opts)
         if stream_url:
-            logger.info(f"✅ [YTDLP-DIRECT] live stream url resolved: {video_id}")
+            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1 android_vr): {video_id}")
             return stream_url
-        return None
     except Exception as e:
-        logger.error(f"❌ [YTDLP-DIRECT] stream url resolve failed ({video_id}): {e}")
-        return None
+        tier1_err = str(e)
+    else:
+        tier1_err = "no formats returned"
+
+    # Tier 2: android_vr + cookies — only if we have cookies to try.
+    if has_cookies:
+        tier2_opts = {**tier1_opts, "cookiefile": cookies_path}
+        try:
+            stream_url = await loop.run_in_executor(None, _run, tier2_opts)
+            if stream_url:
+                logger.info(f"✅ [YTDLP-DIRECT] resolved (tier2 android_vr+cookies): {video_id}")
+                return stream_url
+        except Exception as e:
+            tier2_err = str(e)
+        else:
+            tier2_err = "no formats returned"
+    else:
+        tier2_err = "no cookies file configured"
+
+    # Tier 3: web_embedded/web + cookies — slow last resort (JS-challenge).
+    tier3_opts = {
+        **base_opts,
+        "extractor_args": {"youtube": {"player_client": ["web_embedded", "web"]}},
+    }
+    if has_cookies:
+        tier3_opts["cookiefile"] = cookies_path
+    try:
+        stream_url = await loop.run_in_executor(None, _run, tier3_opts)
+        if stream_url:
+            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier3 web fallback): {video_id}")
+            return stream_url
+        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier2={tier2_err} tier3=no formats returned")
+    except Exception as e:
+        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier2={tier2_err} tier3={e}")
+    return None
 
 
 # --- OPTIONAL: direct yt-dlp (+cookies) fast path -------------------------
