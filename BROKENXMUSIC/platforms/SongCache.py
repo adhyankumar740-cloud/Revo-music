@@ -425,7 +425,13 @@ class SongCacheAPI:
                 chunk = await gen.__anext__()
                 return gen, chunk
             except StopAsyncIteration:
-                return gen, b""
+                # A generator that ends before yielding a single byte is
+                # not a usable stream (real audio always has a first
+                # chunk) — it's indistinguishable in effect from a hard
+                # failure and must not be treated as success, or an empty
+                # FIFO gets handed to pytgcalls and, worse, an empty file
+                # ends up promoted into the local cache.
+                return None, RuntimeError("stream yielded zero chunks")
             except Exception as e:
                 return None, e
 
@@ -491,16 +497,19 @@ class SongCacheAPI:
                 logger.error(f"[SongCache] FIFO open failed for {norm!r}: {e}")
 
             completed = False
+            bytes_written = 0
             if fd is not None:
                 try:
                     if first_chunk:
                         await asyncio.to_thread(os.write, fd, first_chunk)
                         if tee_fh:
                             await asyncio.to_thread(tee_fh.write, first_chunk)
+                        bytes_written += len(first_chunk)
                     async for chunk in gen:
                         await asyncio.to_thread(os.write, fd, chunk)
                         if tee_fh:
                             await asyncio.to_thread(tee_fh.write, chunk)
+                        bytes_written += len(chunk)
                     completed = True
                 except Exception as e:
                     logger.error(
@@ -511,6 +520,21 @@ class SongCacheAPI:
                         os.close(fd)
                     except Exception:
                         pass
+
+            # A generator that "completes" after writing zero (or barely
+            # any) bytes isn't a real success — it's what a mid-stream
+            # FILE_REFERENCE_EXPIRED (or a probe that immediately hit
+            # StopAsyncIteration) looks like from here. Never let that get
+            # promoted to the local cache: local_cache.put() itself now
+            # also guards on size, but skip the useless copy attempt and
+            # log clearly why playback for this request is failing.
+            if completed and bytes_written < local_cache.MIN_VALID_AUDIO_BYTES:
+                logger.error(
+                    f"[SongCache] Stream for {norm!r} 'completed' but only "
+                    f"wrote {bytes_written} bytes — treating as failed "
+                    f"(likely a stale file_id) and not caching it."
+                )
+                completed = False
 
             if tee_fh:
                 try:
