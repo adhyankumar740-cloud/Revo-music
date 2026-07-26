@@ -146,9 +146,13 @@ async def _download_audio_ytdlp(video_id: str) -> str:
         # do — and yt-dlp still queries those too, each one spinning up Deno
         # to solve YouTube's signature challenge. That's the ~50s+ delay
         # between "Starting download" and "download complete" in the logs.
-        # Forcing android_vr only skips the JS solver entirely for the
-        # common case (audio-only download), cutting extraction to ~1-3s.
-        "extractor_args": {"youtube": {"player_client": ["android_vr"]}},
+        # android_vr first (fast, no JS solving) — but some videos (made-
+        # for-kids, certain age/region-restricted ones) return NO usable
+        # formats on android_vr at all. Forcing android_vr ONLY (no
+        # fallback) made those hard-fail straight to the slow TgScrap path
+        # instead of just costing a few extra seconds of JS solving. Keep
+        # web_embedded/web as fallbacks so those videos still succeed here.
+        "extractor_args": {"youtube": {"player_client": ["android_vr", "web_embedded", "web"]}},
         "socket_timeout": 15,
         # NO postprocessors here on purpose. FFmpegExtractAudio->mp3 was a
         # full audio re-encode of the whole track (several more seconds,
