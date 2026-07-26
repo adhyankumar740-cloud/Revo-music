@@ -159,11 +159,17 @@ async def _get_stream_url_ytdlp(video_id: str):
         # package at BUILD time instead, so there's no runtime fetch at all.
         "extractor_args": {"youtube": {"player_client": ["android_vr", "web_embedded", "web"]}},
         "socket_timeout": 15,
+        # NOTE: deliberately NOT reading config.YTDLP_COOKIES_FILE here.
+        # yt-dlp skips "android_vr" the moment cookies are present ("Skipping
+        # client 'android_vr' since it does not support cookies"), which
+        # forces web_embedded/web — both of which need YouTube's signature
+        # JS challenge solved via Deno (~11s on Render's free-tier CPU, per
+        # the 15:31:28 -> 15:31:39 log window). android_vr needs no JS
+        # solving at all, so this fast-path stays cookie-free on purpose to
+        # keep that client in play. The cookie-using slow path is
+        # _download_audio_ytdlp below, kept separate for videos android_vr
+        # can't resolve.
     }
-
-    cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
-    if cookies_path and os.path.exists(cookies_path):
-        ytdl_opts["cookiefile"] = cookies_path
 
     try:
         loop = asyncio.get_event_loop()
