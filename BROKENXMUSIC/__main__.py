@@ -34,6 +34,10 @@ async def init():
     except:
         pass
     await app.start()
+    try:
+        await SongCache.ensure_indexes()
+    except Exception as e:
+        LOGGER(__name__).error(f"[SongCache] ensure_indexes failed at startup: {e}")
     for all_module in ALL_MODULES:
         importlib.import_module("BROKENXMUSIC.plugins" + all_module)
     LOGGER("BROKENXMUSIC.plugins").info("Successfully Imported Modules...")
