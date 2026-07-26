@@ -271,7 +271,10 @@ class TgScrapAPI:
                 chunk = await gen.__anext__()
                 return gen, chunk
             except StopAsyncIteration:
-                return gen, b""
+                # Zero chunks is not a usable stream — treat it as a
+                # failure so the caller falls back to a full download
+                # instead of handing an empty FIFO to pytgcalls.
+                return None, RuntimeError("stream yielded zero chunks")
             except Exception as e:
                 return None, e
 
