@@ -124,7 +124,7 @@ async def _download_audio_ytdlp(video_id: str) -> str:
         "format": "bestaudio/best",
         "outtmpl": os.path.join("downloads", f"{video_id}.%(ext)s"),
         "quiet": True,
-        "no_warnings": True,
+        "no_warnings": False,  # temporarily surfaced for debugging — see note above
         "noplaylist": True,
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
