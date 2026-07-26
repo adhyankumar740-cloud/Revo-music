@@ -108,6 +108,56 @@ def _clean_query(title: str) -> str:
     return q or title
 
 
+async def _get_stream_url_ytdlp(video_id: str):
+    """
+    LIVE STREAMING fast-path: resolve a direct, ffmpeg-playable audio URL
+    straight from YouTube's CDN — no file is downloaded or written to disk
+    at all. pytgcalls/ffmpeg then reads and decodes that URL live as the
+    group call plays it, exactly like this bot's existing M3U8/"index link"
+    direct-URL playback already does (see _build_stream / join_call).
+    That means playback can start within a second or two of resolving the
+    URL, instead of waiting for the whole track to land on disk first.
+
+    Risk (by design, accepted): this URL is short-lived and tied to the
+    session/IP that requested it. If YouTube expires or throttles it
+    mid-play, playback can stall or 403 partway through a song — unlike a
+    downloaded file, which always plays start-to-finish once it exists.
+    """
+    logger = LOGGER("YtDlpDirect/Youtube.py")
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    ytdl_opts = {
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "remote_components": ["ejs:github"],
+        "extractor_args": {"youtube": {"player_client": ["android_vr", "web_embedded", "web"]}},
+        "socket_timeout": 15,
+    }
+
+    cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
+    if cookies_path and os.path.exists(cookies_path):
+        ytdl_opts["cookiefile"] = cookies_path
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _run():
+            import yt_dlp
+            with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                return info.get("url") if info else None
+
+        stream_url = await loop.run_in_executor(None, _run)
+        if stream_url:
+            logger.info(f"✅ [YTDLP-DIRECT] live stream url resolved: {video_id}")
+            return stream_url
+        return None
+    except Exception as e:
+        logger.error(f"❌ [YTDLP-DIRECT] stream url resolve failed ({video_id}): {e}")
+        return None
+
+
 # --- OPTIONAL: direct yt-dlp (+cookies) fast path -------------------------
 # Self-contained on purpose: if this misbehaves, set config.ENABLE_YTDLP_DIRECT_AUDIO
 # back to False (or delete this whole block + its one call-site below) and
@@ -188,7 +238,6 @@ async def _download_audio_ytdlp(video_id: str) -> str:
     except Exception as e:
         logger.error(f"❌ [YTDLP-DIRECT] failed ({video_id}): {e}")
         return None
-# --- end optional block ----------------------------------------------------
 
 
 async def download_song(link: str) -> str:
@@ -249,7 +298,33 @@ async def download_song(link: str) -> str:
         except Exception as e:
             logger.error(f"❌ [AUDIO] Song Cache lookup failed: {e}")
 
-    # Primary path: yt-dlp + cookies (fast — a couple of seconds).
+    # Primary path: live CDN streaming — resolve a direct URL and hand it
+    # back immediately (no download wait at all). The real download+cache
+    # still happens, just in the background, so a REPLAY of this song
+    # hits the instant/reliable local-disk cache instead of resolving a
+    # fresh streaming URL again.
+    if getattr(config, "ENABLE_YTDLP_DIRECT_AUDIO", False):
+        try:
+            stream_url = await _get_stream_url_ytdlp(video_id)
+            if stream_url:
+                logger.info(f"✅ [AUDIO] live-stream hit (no download wait): {video_id}")
+
+                async def _bg_download_and_cache():
+                    try:
+                        path = await _download_audio_ytdlp(video_id)
+                        if path and os.path.exists(path):
+                            _cache_in_background(query, path)
+                    except Exception as e:
+                        logger.error(f"❌ [AUDIO] Background full download failed for {video_id}: {e}")
+
+                asyncio.create_task(_bg_download_and_cache())
+                return stream_url
+        except Exception as e:
+            logger.error(f"❌ [AUDIO] live-stream resolve failed, falling back to download: {e}")
+
+    # Fallback: yt-dlp downloads the file to disk (fast — a couple of
+    # seconds — but not instant like the streaming path above). Used when
+    # streaming URL resolution itself fails for some reason.
     if getattr(config, "ENABLE_YTDLP_DIRECT_AUDIO", False):
         try:
             ytdlp_path = await _download_audio_ytdlp(video_id)
