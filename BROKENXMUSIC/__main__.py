@@ -23,6 +23,14 @@ async def init():
     ):
         LOGGER(__name__).error("Assistant client variables not defined, exiting...")
         exit()
+    # Bind the port FIRST, before anything that can block for a long time
+    # (like a Telegram FloodWait during app.start()). Render's Web Service
+    # kills+restarts the deploy if no port opens within a few minutes; if
+    # that happens mid-FloodWait, the restart re-triggers login and the
+    # FloodWait effectively never gets a chance to finish. Opening the port
+    # up front means Render's port scan succeeds immediately regardless of
+    # how long auth takes.
+    await start_web_server()
     await sudo()
     try:
         users = await get_gbanned()
@@ -42,7 +50,6 @@ async def init():
         importlib.import_module("BROKENXMUSIC.plugins" + all_module)
     LOGGER("BROKENXMUSIC.plugins").info("Successfully Imported Modules...")
     await userbot.start()
-    await start_web_server()
     await Broken.start()
     try:
         await Broken.stream_call("https://te.legra.ph/file/29f784eb49d230ab62e9e.mp4")
