@@ -122,13 +122,34 @@ async def _get_stream_url_ytdlp(video_id: str):
     session/IP that requested it. If YouTube expires or throttles it
     mid-play, playback can stall or 403 partway through a song — unlike a
     downloaded file, which always plays start-to-finish once it exists.
+
+    TEMP DIAGNOSTIC MODE: verbose=True + a logger that routes every yt-dlp
+    internal line (webpage fetch, which player_client is being tried,
+    JS-challenge solving, etc.) through our own timestamped logger. Two
+    guesses (EJS-from-GitHub, cold-start) already turned out to be wrong/
+    incomplete — this makes the next log paste show EXACTLY which step
+    the ~20s is going into instead of guessing a third time. Safe to
+    revert to quiet/no_warnings once the real bottleneck is confirmed.
     """
     logger = LOGGER("YtDlpDirect/Youtube.py")
+
+    class _YtdlpDebugLogger:
+        def debug(self, msg):
+            logger.info(f"[yt-dlp] {msg}")
+
+        def warning(self, msg):
+            logger.warning(f"[yt-dlp] {msg}")
+
+        def error(self, msg):
+            logger.error(f"[yt-dlp] {msg}")
+
     url = f"https://www.youtube.com/watch?v={video_id}"
     ytdl_opts = {
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "quiet": True,
-        "no_warnings": True,
+        "no_warnings": False,
+        "verbose": True,
+        "logger": _YtdlpDebugLogger(),
         "noplaylist": True,
         # NOTE: no "remote_components": ["ejs:github"] here on purpose —
         # that fetched the JS solver from GitHub over the network on the
