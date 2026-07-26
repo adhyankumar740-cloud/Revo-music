@@ -536,6 +536,27 @@ class SongCacheAPI:
                 )
                 completed = False
 
+            # Self-heal for NEXT time: a mid-stream break (Broken pipe, etc)
+            # with very little written usually means the file_id died partway
+            # through, not a clean end-of-track. This playback attempt is
+            # already lost, but kick off a full download in the background so
+            # it lands in local_cache — the next request for this exact song
+            # gets an instant Tier-0 hit instead of hitting the same failure
+            # again. Best-effort only: never let this raise into the pump.
+            if not completed and bytes_written < local_cache.MIN_VALID_AUDIO_BYTES:
+                logger.info(
+                    f"[SongCache] Stream for {norm!r} broke early "
+                    f"({bytes_written} bytes) — fetching full file in the "
+                    f"background so the next request for it doesn't repeat "
+                    f"this failure."
+                )
+                async def _heal():
+                    try:
+                        await self.fetch_file(entry, save_dir=save_dir)
+                    except Exception as e:
+                        logger.error(f"[SongCache] Background self-heal fetch failed for {norm!r}: {e}")
+                asyncio.create_task(_heal())
+
             if tee_fh:
                 try:
                     tee_fh.close()
