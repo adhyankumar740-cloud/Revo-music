@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import os
 import re
 import time
@@ -38,13 +39,34 @@ class TgScrapAPI:
         self.max_menu_hops = getattr(config, "TG_SCRAP_MAX_MENU_HOPS", 3)
 
     def _get_assistant(self):
+        """Which assistant scrapes vkmusic_bot for this call. Skips
+        config.DEDICATED_PLAY_ASSISTANT (default: assistant 1, which is
+        reserved purely for voice-chat joins/streaming — see database.py's
+        _pick_play_assistant) and round-robins across whichever connected
+        assistants are left, so with 3+ assistants configured, scraping
+        requests actually spread out and run in parallel instead of all
+        queueing on a single account."""
         # Local import to avoid circular imports at module load time.
         from BROKENXMUSIC import userbot
 
-        for client in (userbot.one, userbot.two, userbot.three, userbot.four, userbot.five):
-            if client and getattr(client, "is_connected", False):
-                return client
-        return None
+        numbered = [
+            (1, userbot.one), (2, userbot.two), (3, userbot.three),
+            (4, userbot.four), (5, userbot.five),
+        ]
+        connected = [
+            (n, c) for n, c in numbered if c and getattr(c, "is_connected", False)
+        ]
+        if not connected:
+            return None
+
+        dedicated_play = getattr(config, "DEDICATED_PLAY_ASSISTANT", None)
+        pool = [(n, c) for n, c in connected if n != dedicated_play] or connected
+        pool_clients = [c for _, c in pool]
+
+        if not hasattr(self, "_scrape_cycle_snapshot") or self._scrape_cycle_snapshot != pool_clients:
+            self._scrape_cycle_snapshot = pool_clients
+            self._scrape_cycle = itertools.cycle(pool_clients)
+        return next(self._scrape_cycle)
 
     async def _wait_for(self, client, chat_id, min_id, timeout, condition, poll_interval=0.4):
         """Assistants run with no_updates=True (deliberately — it avoids the
