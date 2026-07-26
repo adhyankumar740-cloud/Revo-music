@@ -1,6 +1,7 @@
 import random
 from typing import Dict, List, Union
 
+import config
 from BROKENXMUSIC import userbot
 from BROKENXMUSIC.core.mongo import mongodb
 
@@ -39,6 +40,19 @@ playtype = {}
 skipmode = {}
 
 
+def _pick_play_assistant(assistants):
+    """Which assistant should join/stream into a voice chat. Prefers
+    config.DEDICATED_PLAY_ASSISTANT (default: 1) so that account is always
+    the one holding voice-chat connections, never busy mid-download for a
+    TgScrap/SongCache fetch — those run on the other assistants (see
+    SongCache._live_pool). Falls back to a random pick among whatever's
+    connected if the dedicated one isn't running."""
+    dedicated = config.DEDICATED_PLAY_ASSISTANT
+    if dedicated and dedicated in assistants:
+        return dedicated
+    return random.choice(assistants)
+
+
 async def get_assistant_number(chat_id: int) -> str:
     assistant = assistantdict.get(chat_id)
     return assistant
@@ -69,7 +83,7 @@ async def set_assistant_new(chat_id, number):
 async def set_assistant(chat_id):
     from BROKENXMUSIC.core.userbot import assistants
 
-    ran_assistant = random.choice(assistants)
+    ran_assistant = _pick_play_assistant(assistants)
     assistantdict[chat_id] = ran_assistant
     await assdb.update_one(
         {"chat_id": chat_id},
@@ -110,7 +124,7 @@ async def get_assistant(chat_id: int) -> str:
 async def set_calls_assistant(chat_id):
     from BROKENXMUSIC.core.userbot import assistants
 
-    ran_assistant = random.choice(assistants)
+    ran_assistant = _pick_play_assistant(assistants)
     assistantdict[chat_id] = ran_assistant
     await assdb.update_one(
         {"chat_id": chat_id},
