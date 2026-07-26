@@ -108,6 +108,57 @@ def _clean_query(title: str) -> str:
     return q or title
 
 
+# --- OPTIONAL: direct yt-dlp (+cookies) fast path -------------------------
+# Self-contained on purpose: if this misbehaves, set config.ENABLE_YTDLP_DIRECT_AUDIO
+# back to False (or delete this whole block + its one call-site below) and
+# everything reverts to the original SongCache -> TgScrap flow untouched.
+async def _download_audio_ytdlp(video_id: str) -> str:
+    logger = LOGGER("YtDlpDirect/Youtube.py")
+    file_path = os.path.join("downloads", f"{video_id}.mp3")
+
+    if os.path.exists(file_path):
+        return file_path
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    ytdl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": os.path.join("downloads", f"{video_id}.%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+        ],
+    }
+
+    cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
+    if cookies_path and os.path.exists(cookies_path):
+        ytdl_opts["cookiefile"] = cookies_path
+    elif cookies_path:
+        logger.warning(f"⚠️ [YTDLP-DIRECT] cookies file not found at '{cookies_path}', continuing without it")
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _run():
+            import yt_dlp
+            with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
+                ydl.download([url])
+
+        await loop.run_in_executor(None, _run)
+
+        if os.path.exists(file_path):
+            logger.info(f"✅ [YTDLP-DIRECT] download complete: {video_id}")
+            return file_path
+
+        logger.error(f"❌ [YTDLP-DIRECT] file not found after download: {video_id}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ [YTDLP-DIRECT] failed ({video_id}): {e}")
+        return None
+# --- end optional block ----------------------------------------------------
+
+
 async def download_song(link: str) -> str:
     """
     Audio downloads check the Song Cache (your own channels) first, then
@@ -141,6 +192,23 @@ async def download_song(link: str) -> str:
                     return filepath
         except Exception as e:
             logger.error(f"❌ [AUDIO] Song Cache lookup failed: {e}")
+
+    # Optional fast path: try yt-dlp+cookies directly before the slower
+    # TgScrap round-trip. Only runs if explicitly enabled in config/.env.
+    if getattr(config, "ENABLE_YTDLP_DIRECT_AUDIO", False):
+        try:
+            ytdlp_path = await _download_audio_ytdlp(video_id)
+            if ytdlp_path and os.path.exists(ytdlp_path):
+                logger.info(f"✅ [AUDIO] yt-dlp direct hit: {video_id}")
+                if config.ENABLE_SONG_CACHE and config.SONG_CACHE_CHANNEL:
+                    from BROKENXMUSIC import SongCache
+                    try:
+                        await SongCache.save_to_cache(query, ytdlp_path, raw_title, "0:00")
+                    except Exception as e:
+                        logger.error(f"❌ [AUDIO] Song Cache save (yt-dlp path) failed: {e}")
+                return ytdlp_path
+        except Exception as e:
+            logger.error(f"❌ [AUDIO] yt-dlp direct fast path failed, falling back to TgScrap: {e}")
 
     try:
         track_details, filepath = await _tgscrap.download(query)
