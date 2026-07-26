@@ -44,7 +44,7 @@ SONG_CACHE_SOURCE_CHANNELS = [
 # into a fast MongoDB-indexed local library (see BROKENXMUSIC/platforms/SongCache.py).
 # Every song freshly pulled via TgScrap gets uploaded here and indexed, so the
 # next request for it is an instant file_id-based hit — no re-download.
-ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "True").lower() == "true"
+ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "False").lower() == "true"
 
 # ⚠️ OPTIONAL fast-path: try yt-dlp directly (with a cookies.txt file) BEFORE
 # falling back to TgScrap. OFF by default — the existing TgScrap flow is
