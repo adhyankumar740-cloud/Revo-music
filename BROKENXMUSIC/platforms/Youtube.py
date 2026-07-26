@@ -130,7 +130,12 @@ async def _get_stream_url_ytdlp(video_id: str):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "remote_components": ["ejs:github"],
+        # NOTE: no "remote_components": ["ejs:github"] here on purpose —
+        # that fetched the JS solver from GitHub over the network on the
+        # FIRST YouTube request after every cold start/restart (~15-20s on
+        # Render's network, matching the delay you saw). requirements.txt
+        # now installs "yt-dlp[default]", which bundles the solver into the
+        # package at BUILD time instead, so there's no runtime fetch at all.
         "extractor_args": {"youtube": {"player_client": ["android_vr", "web_embedded", "web"]}},
         "socket_timeout": 15,
     }
@@ -187,10 +192,11 @@ async def _download_audio_ytdlp(video_id: str) -> str:
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        # Required so yt-dlp can fetch its JS challenge-solver script (runs
-        # via the Deno runtime installed in the Dockerfile). Without this,
-        # Deno is present but unused and YouTube only returns image formats.
-        "remote_components": ["ejs:github"],
+        # NOTE: no "remote_components": ["ejs:github"] here — the JS
+        # solver is now bundled at build time via yt-dlp[default] in
+        # requirements.txt, instead of being fetched from GitHub on the
+        # first request after every cold start (that fetch was the ~18s
+        # delay you saw in the "live stream url resolved" log line).
         # yt-dlp's default player_client list is "android_vr,web,web_safari".
         # android_vr needs NO JS challenge solving at all, but web/web_safari
         # do — and yt-dlp still queries those too, each one spinning up Deno
