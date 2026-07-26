@@ -98,12 +98,27 @@ async def stream(
                     "video" if video else "audio",
                     forceplay=forceplay,
                 )
-                img = await get_thumb(vidid)
+                # --- OLD (thumbnail) VERSION — kept for future rollback ---
+                # img = await get_thumb(vidid)
+                # button = stream_markup(_, chat_id)
+                # run = await app.send_photo(
+                #     original_chat_id,
+                #     photo=img,
+                #     caption=_["stream_1"].format(
+                #         f"https://t.me/{app.username}?start=info_{vidid}",
+                #         title[:23],
+                #         duration_min,
+                #         user_name,
+                #     ),
+                #     reply_markup=InlineKeyboardMarkup(button),
+                # )
+                # db[chat_id][0]["mystic"] = run
+                # db[chat_id][0]["markup"] = "stream"
+                # --- NEW (fast, no-thumbnail) VERSION ---
                 button = stream_markup(_, chat_id)
-                run = await app.send_photo(
+                run = await app.send_message(
                     original_chat_id,
-                    photo=img,
-                    caption=_["stream_1"].format(
+                    text=_["stream_1"].format(
                         f"https://t.me/{app.username}?start=info_{vidid}",
                         title[:23],
                         duration_min,
@@ -184,12 +199,27 @@ async def stream(
                 "video" if video else "audio",
                 forceplay=forceplay,
             )
-            img = await get_thumb(vidid)
+            # --- OLD (thumbnail) VERSION — kept for future rollback ---
+            # img = await get_thumb(vidid)
+            # button = stream_markup(_, chat_id)
+            # run = await app.send_photo(
+            #     original_chat_id,
+            #     photo=img,
+            #     caption=_["stream_1"].format(
+            #         f"https://t.me/{app.username}?start=info_{vidid}",
+            #         title[:23],
+            #         duration_min,
+            #         user_name,
+            #     ),
+            #     reply_markup=InlineKeyboardMarkup(button),
+            # )
+            # db[chat_id][0]["mystic"] = run
+            # db[chat_id][0]["markup"] = "stream"
+            # --- NEW (fast, no-thumbnail) VERSION ---
             button = stream_markup(_, chat_id)
-            run = await app.send_photo(
+            run = await app.send_message(
                 original_chat_id,
-                photo=img,
-                caption=_["stream_1"].format(
+                text=_["stream_1"].format(
                     f"https://t.me/{app.username}?start=info_{vidid}",
                     title[:23],
                     duration_min,
@@ -402,12 +432,27 @@ async def stream(
                 "video" if video else "audio",
                 forceplay=forceplay,
             )
-            img = await get_thumb(vidid)
+            # --- OLD (thumbnail) VERSION — kept for future rollback ---
+            # img = await get_thumb(vidid)
+            # button = stream_markup(_, chat_id)
+            # run = await app.send_photo(
+            #     original_chat_id,
+            #     photo=img,
+            #     caption=_["stream_1"].format(
+            #         f"https://t.me/{app.username}?start=info_{vidid}",
+            #         title[:23],
+            #         duration_min,
+            #         user_name,
+            #     ),
+            #     reply_markup=InlineKeyboardMarkup(button),
+            # )
+            # db[chat_id][0]["mystic"] = run
+            # db[chat_id][0]["markup"] = "tg"
+            # --- NEW (fast, no-thumbnail) VERSION ---
             button = stream_markup(_, chat_id)
-            run = await app.send_photo(
+            run = await app.send_message(
                 original_chat_id,
-                photo=img,
-                caption=_["stream_1"].format(
+                text=_["stream_1"].format(
                     f"https://t.me/{app.username}?start=info_{vidid}",
                     title[:23],
                     duration_min,
