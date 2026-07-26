@@ -4,9 +4,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     curl \
+    unzip \
     nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp needs an external JS runtime to solve YouTube's challenge and get
+# real (non-image-only) formats — see https://github.com/yt-dlp/yt-dlp/wiki/EJS.
+# It only auto-detects "deno" by default (installed Node.js alone is NOT
+# picked up automatically), so install deno here and put it on PATH.
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+ENV PATH="/usr/local/bin:${PATH}"
 
 WORKDIR /app
 COPY . /app/
