@@ -194,8 +194,7 @@ async def _get_stream_url_ytdlp(video_id: str):
     tier1b_opts = {
         **base_opts,
         "extractor_args": {
-            "youtube": {"player_client": ["mweb"]},
-            "youtubepot-bgutilhttp": {"fetch_pot": ["always"]},
+            "youtube": {"player_client": ["mweb"], "fetch_pot": ["always"]},
         },
     }
     try:
