@@ -116,17 +116,20 @@ async def _get_stream_url_ytdlp(video_id: str):
     group call plays it, exactly like this bot's existing M3U8/"index link"
     direct-URL playback already does (see _build_stream / join_call).
 
-    Speed tiers, cheapest first — each one only runs if the previous one
-    genuinely fails, so the common case pays for tier 1 only:
-      1. android_vr, no cookies   -> no JS-challenge, no auth. Fastest path,
-         works for the vast majority of videos.
-      2. android_vr, with cookies -> only tried if tier 1 hit YouTube's
-         "Sign in to confirm you're not a bot" bot-check (common on shared
-         Render IPs). Still no JS-challenge, just adds auth.
-      3. web_embedded + web, with cookies -> last resort for videos
-         android_vr can never resolve (age/region-restricted, made-for-kids,
-         etc). This is the only tier that pays the Deno JS-challenge cost
-         (~11s on Render's free-tier CPU).
+    Speed tiers, cheapest first:
+      1. android_vr, no cookies -> no JS-challenge, no auth. Fastest path,
+         works whenever YouTube doesn't bot-flag this server's IP.
+      2. web_embedded + web, with cookies -> last resort, used whenever
+         tier 1 fails for ANY reason (bot-check, age/region-restricted,
+         made-for-kids, etc). This is the only tier that pays the Deno
+         JS-challenge cost (~11-20s on Render's free-tier CPU).
+
+    There used to be a middle "android_vr + cookies" tier here. It has been
+    removed: yt-dlp silently SKIPS the android_vr client the instant cookies
+    are attached ("Skipping client 'android_vr' since it does not support
+    cookies"), so that tier had zero clients left to try and always failed
+    with "Requested format is not available" — it never once succeeded, it
+    only added a wasted attempt before falling through to tier 2 anyway.
 
     Diagnostic verbose/debug logging has been removed on purpose — it was
     temporary instrumentation used to find the original ~20s bottleneck
@@ -169,41 +172,26 @@ async def _get_stream_url_ytdlp(video_id: str):
         if stream_url:
             logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1 android_vr): {video_id}")
             return stream_url
+        tier1_err = "no formats returned"
     except Exception as e:
         tier1_err = str(e)
-    else:
-        tier1_err = "no formats returned"
 
-    # Tier 2: android_vr + cookies — only if we have cookies to try.
-    if has_cookies:
-        tier2_opts = {**tier1_opts, "cookiefile": cookies_path}
-        try:
-            stream_url = await loop.run_in_executor(None, _run, tier2_opts)
-            if stream_url:
-                logger.info(f"✅ [YTDLP-DIRECT] resolved (tier2 android_vr+cookies): {video_id}")
-                return stream_url
-        except Exception as e:
-            tier2_err = str(e)
-        else:
-            tier2_err = "no formats returned"
-    else:
-        tier2_err = "no cookies file configured"
-
-    # Tier 3: web_embedded/web + cookies — slow last resort (JS-challenge).
-    tier3_opts = {
+    # Tier 2: web_embedded/web + cookies — slow last resort (JS-challenge).
+    # (android_vr is never retried here — see docstring above.)
+    tier2_opts = {
         **base_opts,
         "extractor_args": {"youtube": {"player_client": ["web_embedded", "web"]}},
     }
     if has_cookies:
-        tier3_opts["cookiefile"] = cookies_path
+        tier2_opts["cookiefile"] = cookies_path
     try:
-        stream_url = await loop.run_in_executor(None, _run, tier3_opts)
+        stream_url = await loop.run_in_executor(None, _run, tier2_opts)
         if stream_url:
-            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier3 web fallback): {video_id}")
+            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier2 web fallback): {video_id}")
             return stream_url
-        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier2={tier2_err} tier3=no formats returned")
+        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier2=no formats returned")
     except Exception as e:
-        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier2={tier2_err} tier3={e}")
+        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier2={e}")
     return None
 
 
