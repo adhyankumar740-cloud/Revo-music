@@ -207,10 +207,54 @@ def _find_downloaded(video_id: str, kind: str = "audio"):
     return matches[0] if matches else None
 
 
+_MEDIA_CONTENT_TYPES = ("audio/", "video/", "application/octet-stream")
+
+
+async def _probe_has_stream(path: str, stream_type: str) -> bool:
+    """Run ffprobe to confirm `path` actually contains a decodable stream
+    of the given type ('a' for audio, 'v' for video), instead of trusting
+    HTTP 200 + a Content-Disposition header alone.
+
+    This is the exact same check pytgcalls/ffmpeg performs right before
+    playback (see ffmpeg.py check_stream -> NoAudioSourceFound). Running
+    it here, right after the download, means a bad file is caught and
+    discarded immediately — so the caller can fall back to TgScrap —
+    instead of it being reported as a "successful" download, promoted
+    into the local disk cache (breaking that song for every future play
+    until manually evicted), and only failing minutes later deep inside
+    an active group call.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error",
+            "-select_streams", stream_type,
+            "-show_entries", "stream=index",
+            "-of", "csv=p=0",
+            path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        return bool(out.strip())
+    except Exception:
+        # ffprobe missing/misbehaving shouldn't block downloads entirely —
+        # fall back to trusting the content-type check that already ran.
+        return True
+
+
 async def _hf_download(video_id: str, kind: str, format_id: str = None) -> str:
     """Streams a file from the HF Space's /api/download endpoint straight
     to local disk (downloads/{kind}_{video_id}.<ext from filename>).
-    Returns the local path, or None on any failure."""
+    Returns the local path, or None on any failure.
+
+    Validates BOTH the Content-Type header AND (once saved) that ffprobe
+    finds a real audio/video stream in the file. Without this, an HTML
+    holding page served with HTTP 200 during an HF Space cold start or
+    hiccup — the same failure mode the /api/resolve call already guards
+    against — gets written to disk, reported as a success, and is only
+    discovered to be garbage once pytgcalls raises NoAudioSourceFound
+    inside the live group call.
+    """
     logger = LOGGER("YtDlpDirect/Youtube.py")
 
     hf_resolver_url = _hf_base()
@@ -224,42 +268,74 @@ async def _hf_download(video_id: str, kind: str, format_id: str = None) -> str:
 
     os.makedirs("downloads", exist_ok=True)
     dl_timeout = getattr(config, "HF_RESOLVER_DOWNLOAD_TIMEOUT", 60)
+    max_attempts = getattr(config, "HF_RESOLVER_RETRIES", 2)  # total tries, not extra retries
+    retry_delay = getattr(config, "HF_RESOLVER_RETRY_DELAY", 1.5)  # seconds
     params = {"v": video_id, "type": kind}
     if format_id:
         params["format"] = format_id
 
-    try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=dl_timeout)
-        ) as session:
-            async with session.get(
-                f"{hf_resolver_url}/api/download", params=params, headers=_hf_headers()
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.error(f"❌ [HF-DOWNLOAD] HTTP {resp.status} for {video_id}: {body[:200]}")
-                    return None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=dl_timeout)
+            ) as session:
+                async with session.get(
+                    f"{hf_resolver_url}/api/download", params=params, headers=_hf_headers()
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.error(f"❌ [HF-DOWNLOAD] HTTP {resp.status} for {video_id}: {body[:200]}")
+                        return None  # real API error — not transient, don't retry
 
-                # Extract extension from the Content-Disposition filename
-                # the Space sends (e.g. "audio_<id>.m4a" / "video_<id>.mp4").
-                cd = resp.headers.get("Content-Disposition", "")
-                ext = "m4a" if kind == "audio" else "mp4"
-                if "filename=" in cd:
-                    fname = cd.split("filename=")[-1].strip('"; ')
-                    if "." in fname:
-                        ext = fname.rsplit(".", 1)[-1]
+                    ctype = (resp.content_type or "").lower()
+                    if not ctype.startswith(_MEDIA_CONTENT_TYPES):
+                        # Cold-starting / transient-hiccup holding page,
+                        # served with a 200 — not a real failure, retry.
+                        body_preview = (await resp.text())[:120]
+                        logger.warning(
+                            f"⚠️ [HF-DOWNLOAD] hf-space returned non-media "
+                            f"(content-type={ctype!r}, attempt {attempt}/{max_attempts}) "
+                            f"({video_id}): {body_preview!r}"
+                        )
+                    else:
+                        # Extract extension from the Content-Disposition
+                        # filename the Space sends (e.g. "audio_<id>.m4a").
+                        cd = resp.headers.get("Content-Disposition", "")
+                        ext = "m4a" if kind == "audio" else "mp4"
+                        if "filename=" in cd:
+                            fname = cd.split("filename=")[-1].strip('"; ')
+                            if "." in fname:
+                                ext = fname.rsplit(".", 1)[-1]
 
-                dest = os.path.join("downloads", f"{kind}_{video_id}.{ext}")
-                tmp_dest = dest + ".part"
-                with open(tmp_dest, "wb") as f:
-                    async for chunk in resp.content.iter_chunked(1024 * 256):
-                        f.write(chunk)
-                os.replace(tmp_dest, dest)
-                logger.info(f"✅ [HF-DOWNLOAD] {kind} download complete: {video_id}")
-                return dest
-    except Exception as e:
-        logger.error(f"❌ [HF-DOWNLOAD] failed ({kind}, {video_id}): {e}")
-        return None
+                        dest = os.path.join("downloads", f"{kind}_{video_id}.{ext}")
+                        tmp_dest = dest + ".part"
+                        with open(tmp_dest, "wb") as f:
+                            async for chunk in resp.content.iter_chunked(1024 * 256):
+                                f.write(chunk)
+                        os.replace(tmp_dest, dest)
+
+                        stream_type = "a" if kind == "audio" else "v"
+                        if await _probe_has_stream(dest, stream_type):
+                            logger.info(f"✅ [HF-DOWNLOAD] {kind} download complete: {video_id}")
+                            return dest
+
+                        logger.error(
+                            f"❌ [HF-DOWNLOAD] saved file has no decodable {kind} stream "
+                            f"(attempt {attempt}/{max_attempts}) ({video_id}) — discarding"
+                        )
+                        try:
+                            os.remove(dest)
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.error(
+                f"❌ [HF-DOWNLOAD] failed (attempt {attempt}/{max_attempts}) ({kind}, {video_id}): {e}"
+            )
+
+        if attempt < max_attempts:
+            await asyncio.sleep(retry_delay)
+
+    return None
 
 
 async def _download_audio_ytdlp(video_id: str) -> str:
