@@ -55,6 +55,18 @@ ENABLE_YTDLP_DIRECT_AUDIO = getenv("ENABLE_YTDLP_DIRECT_AUDIO", "False").lower()
 # browser session). Leave blank to try yt-dlp without cookies (works less
 # reliably on cloud/datacenter IPs).
 YTDLP_COOKIES_FILE = getenv("YTDLP_COOKIES_FILE", "cookies.txt")
+
+# --- Fast external resolver (HF Space running yt-dlp) -----------------------
+# Tried FIRST, before any local tier — typically resolves in 2-4s vs 15-20s
+# on Render's free CPU. If it's unreachable, times out, or fails, the bot
+# transparently falls back to the local tiers below, so this is purely an
+# accelerator and never a single point of failure.
+# Example: https://your-username-your-space.hf.space/api/resolve
+HF_RESOLVER_URL = getenv("HF_RESOLVER_URL", "").strip().rstrip("/")
+HF_RESOLVER_TIMEOUT = float(getenv("HF_RESOLVER_TIMEOUT", 8))
+HF_RESOLVER_DOWNLOAD_TIMEOUT = float(getenv("HF_RESOLVER_DOWNLOAD_TIMEOUT", 60))
+# Must match the RESOLVER_API_KEY secret set on the HF Space.
+HF_RESOLVER_API_KEY = getenv("HF_RESOLVER_API_KEY", "").strip()
 # CDN Cache is an unfinished feature (no CDNCache module exists yet) — keep off.
 ENABLE_CDN_CACHE = getenv("ENABLE_CDN_CACHE", "False").lower() == "true"
 _raw_song_cache_channel = getenv("SONG_CACHE_CHANNEL", "").strip()
