@@ -192,20 +192,16 @@ async def _get_stream_url_ytdlp(video_id: str):
         except Exception as e:
             tier1_err = str(e)
 
-    # Tier 1b: mweb + POT token (via the bgutil provider from Dockerfile/
-    # start.sh). fetch_pot=always forces yt-dlp to actually request a token
-    # from our provider instead of only doing so if it thinks the client
-    # needs one — the "auto" default has been unreliable while YouTube is
-    # still mid-rollout on requiring this per the PO Token Guide.
-    #
-    # Cookies are attached here too (unlike android_vr, mweb can actually
-    # use them) — a real POT token alone still got bot-blocked in testing,
-    # so this combines both signals: cookies for session/account trust,
-    # POT token for client attestation.
+    # Tier 1b: mweb + cookies. fetch_pot is left on "auto" (yt-dlp's
+    # default) — there is no bgutil POT provider running anymore (removed
+    # from start.sh to save RAM on Render's free tier), so forcing
+    # fetch_pot="always" just makes yt-dlp wait ~15s for a provider that
+    # doesn't exist before giving up and using cookies anyway. "auto" skips
+    # that wait entirely and goes straight to cookies-based resolution.
     tier1b_opts = {
         **base_opts,
         "extractor_args": {
-            "youtube": {"player_client": ["mweb"], "fetch_pot": ["always"]},
+            "youtube": {"player_client": ["mweb"]},
         },
     }
     if has_cookies:
