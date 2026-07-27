@@ -175,6 +175,30 @@ async def _get_stream_url_ytdlp(video_id: str):
     cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
     has_cookies = bool(cookies_path and os.path.exists(cookies_path))
 
+    # Tier 0: android + cookies. Unlike android_vr, the plain "android"
+    # client accepts cookies AND skips the browser-style JS-challenge that
+    # makes mweb/web slow on Render's weak free-tier CPU — so when it
+    # works, it's the fastest path by far (~2-3s vs ~15-20s). Not
+    # guaranteed to always work (YouTube sometimes bot-blocks it too), so
+    # on any failure this just falls through to the tiers below unchanged.
+    # Short socket_timeout here so a failure is cheap, not a 15s wait.
+    tier0_err = "skipped (no cookies)"
+    if has_cookies:
+        tier0_opts = {
+            **base_opts,
+            "socket_timeout": 8,
+            "extractor_args": {"youtube": {"player_client": ["android"]}},
+            "cookiefile": cookies_path,
+        }
+        try:
+            stream_url = await loop.run_in_executor(None, _run, tier0_opts)
+            if stream_url:
+                logger.info(f"✅ [YTDLP-DIRECT] resolved (tier0 android+cookies, fast path): {video_id}")
+                return stream_url
+            tier0_err = "no formats returned"
+        except Exception as e:
+            tier0_err = str(e)
+
     # Tier 1: android_vr only, no cookies. Skipped whenever cookies are
     # available, because tier1b (below) already succeeds reliably with
     # cookies — trying android_vr first just burns ~15-20s on a bot-check
@@ -209,7 +233,7 @@ async def _get_stream_url_ytdlp(video_id: str):
     try:
         stream_url = await loop.run_in_executor(None, _run, tier1b_opts)
         if stream_url:
-            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1b mweb+POT{'+cookies' if has_cookies else ''}): {video_id}")
+            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1b mweb{'+cookies' if has_cookies else ''}): {video_id}")
             return stream_url
         tier1b_err = "no formats returned"
     except Exception as e:
@@ -228,9 +252,9 @@ async def _get_stream_url_ytdlp(video_id: str):
         if stream_url:
             logger.info(f"✅ [YTDLP-DIRECT] resolved (tier2 web fallback): {video_id}")
             return stream_url
-        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier1b={tier1b_err} tier2=no formats returned")
+        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier0={tier0_err} tier1={tier1_err} tier1b={tier1b_err} tier2=no formats returned")
     except Exception as e:
-        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier1b={tier1b_err} tier2={e}")
+        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier0={tier0_err} tier1={tier1_err} tier1b={tier1b_err} tier2={e}")
     return None
 
 
