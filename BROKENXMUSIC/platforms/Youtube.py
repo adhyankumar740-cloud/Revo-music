@@ -172,6 +172,34 @@ async def _get_stream_url_ytdlp(video_id: str):
         # package at BUILD time instead, so there's no runtime fetch at all.
     }
 
+    # --- TEMPORARY DIAGNOSTIC (remove once bottleneck is identified) ---
+    # Routes yt-dlp's own internal debug trace through our logger with a
+    # per-call elapsed-time stamp on every line, so we can see exactly
+    # which internal step (webpage fetch, player JS fetch, signature
+    # extraction, innertube API call, etc.) is actually eating the 16-18s,
+    # instead of guessing.
+    import time as _t
+
+    class _TimingLogger:
+        def __init__(self):
+            self._t0 = _t.monotonic()
+
+        def _line(self, msg):
+            logger.info(f"[TIMING +{_t.monotonic() - self._t0:5.2f}s] {msg}")
+
+        def debug(self, msg):
+            self._line(msg)
+
+        def info(self, msg):
+            self._line(msg)
+
+        def warning(self, msg):
+            self._line(f"WARNING: {msg}")
+
+        def error(self, msg):
+            self._line(f"ERROR: {msg}")
+    # --- END TEMPORARY DIAGNOSTIC ---
+
     loop = asyncio.get_event_loop()
 
     def _run(opts):
@@ -218,6 +246,9 @@ async def _get_stream_url_ytdlp(video_id: str):
         "extractor_args": {
             "youtube": {"player_client": ["mweb"]},
         },
+        # TEMPORARY DIAGNOSTIC — remove verbose+logger once bottleneck found
+        "verbose": True,
+        "logger": _TimingLogger(),
     }
     if has_cookies:
         tier1b_opts["cookiefile"] = cookies_path
