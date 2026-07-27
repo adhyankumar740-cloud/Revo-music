@@ -33,6 +33,15 @@ from .TgScrap import TgScrapAPI
 _tgscrap = TgScrapAPI()
 
 
+def _hf_headers() -> dict:
+    key = getattr(config, "HF_RESOLVER_API_KEY", "")
+    return {"x-api-key": key} if key else {}
+
+
+def _hf_base() -> str:
+    return getattr(config, "HF_RESOLVER_URL", "")
+
+
 def _extract_video_id(link: str) -> str:
     return link.split("v=")[-1].split("&")[0] if "v=" in link else link
 
@@ -116,251 +125,115 @@ async def _get_stream_url_ytdlp(video_id: str):
     group call plays it, exactly like this bot's existing M3U8/"index link"
     direct-URL playback already does (see _build_stream / join_call).
 
-    Speed tiers, cheapest first:
-      1. android_vr, no cookies -> no JS-challenge, no auth. Tried first
-         since it's free/instant, but currently gets bot-blocked on this
-         IP most of the time (its own DroidGuard-based attestation isn't
-         something our POT provider can supply — see note below).
-      1b. mweb, with POT token -> yt-dlp's own officially recommended
-         setup ("PO Token Guide" wiki TL;DR: use a POT provider plugin
-         for the mweb client). This is the client our bgutil POT provider
-         actually helps — it does NOT help android_vr at all, they use
-         completely different attestation systems (web-based BotGuard vs
-         Android's DroidGuard). mweb is still a "web-family" client so it
-         may still need the Deno JS-challenge for signature descrambling
-         on some formats — POT only removes the bot-check/403, not that.
-      2. web_embedded + web, with cookies -> last resort, used whenever
-         both of the above fail for ANY reason (age/region-restricted,
-         made-for-kids, etc). This is the tier most likely to pay the
-         Deno JS-challenge cost (~11-20s on Render's free-tier CPU).
-
-    There used to be a middle "android_vr + cookies" tier here. It has been
-    removed: yt-dlp silently SKIPS the android_vr client the instant cookies
-    are attached ("Skipping client 'android_vr' since it does not support
-    cookies"), so that tier had zero clients left to try and always failed
-    with "Requested format is not available" — it never once succeeded, it
-    only added a wasted attempt before falling through to tier 2 anyway.
-
-    Diagnostic verbose/debug logging has been removed on purpose — it was
-    temporary instrumentation used to find the original ~20s bottleneck
-    (confirmed: cookies forcing web_embedded/web + JS-challenge solving).
-    Routing every yt-dlp internal line through our logger added its own
-    I/O overhead, so it's off now that the cause is known.
+    yt-dlp itself no longer runs on Render at all for this path — it has
+    been fully offloaded to an external HF Space running yt-dlp, which
+    resolves in ~2-4s vs ~15-20s locally on Render's free CPU. This keeps
+    Render lightweight (no yt-dlp/deno/JS-challenge-solving weight) and
+    fast. If HF_RESOLVER_URL isn't configured or the Space is unreachable,
+    this returns None and the caller falls back to whatever non-yt-dlp
+    playback path it already has (e.g. TgScrap) — there is intentionally
+    no local yt-dlp fallback anymore.
     """
     logger = LOGGER("YtDlpDirect/Youtube.py")
-    url = f"https://www.youtube.com/watch?v={video_id}"
 
-    base_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "socket_timeout": 15,
-        # Explicit, guaranteed-writable cache dir (survives for the whole
-        # container run, wiped only on restart — fine now that restarts are
-        # rare). yt-dlp caches its nsig/JS-challenge solution per player
-        # version here, so once the FIRST song after a boot pays the ~16s
-        # JS-challenge cost, every later song reuses that cached solution
-        # instead of re-solving it — should drop to ~1-2s until YouTube
-        # ships a new player version (happens every few weeks, not daily).
-        "cachedir": os.path.join(os.getcwd(), ".ytdlp_cache"),
-        # NOTE: no "remote_components": ["ejs:github"] here on purpose —
-        # that fetched the JS solver from GitHub over the network on the
-        # FIRST YouTube request after every cold start/restart (~15-20s on
-        # Render's network, matching the delay you saw). requirements.txt
-        # now installs "yt-dlp[default]", which bundles the solver into the
-        # package at BUILD time instead, so there's no runtime fetch at all.
-    }
+    hf_resolver_url = getattr(config, "HF_RESOLVER_URL", "")
+    if not hf_resolver_url:
+        logger.warning("⚠️ [YTDLP-DIRECT] HF_RESOLVER_URL not set — yt-dlp streaming disabled on Render")
+        return None
 
-    # --- TEMPORARY DIAGNOSTIC (remove once bottleneck is identified) ---
-    # Routes yt-dlp's own internal debug trace through our logger with a
-    # per-call elapsed-time stamp on every line, so we can see exactly
-    # which internal step (webpage fetch, player JS fetch, signature
-    # extraction, innertube API call, etc.) is actually eating the 16-18s,
-    # instead of guessing.
-    import time as _t
-
-    class _TimingLogger:
-        def __init__(self):
-            self._t0 = _t.monotonic()
-
-        def _line(self, msg):
-            logger.info(f"[TIMING +{_t.monotonic() - self._t0:5.2f}s] {msg}")
-
-        def debug(self, msg):
-            self._line(msg)
-
-        def info(self, msg):
-            self._line(msg)
-
-        def warning(self, msg):
-            self._line(f"WARNING: {msg}")
-
-        def error(self, msg):
-            self._line(f"ERROR: {msg}")
-    # --- END TEMPORARY DIAGNOSTIC ---
-
-    loop = asyncio.get_event_loop()
-
-    def _run(opts):
-        import yt_dlp
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return info.get("url") if info else None
-
-    cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
-    has_cookies = bool(cookies_path and os.path.exists(cookies_path))
-
-    # NOTE: an "android + cookies" fast-path tier was tried here and removed
-    # — it failed on every video tested ("Requested format is not
-    # available", YouTube restricts android's format list once cookies are
-    # attached) and only added latency before falling through to tier1b
-    # below, which is the tier that actually works reliably.
-    tier0_err = "removed (failed on every video tested)"
-
-    # Tier 1: android_vr only, no cookies. Skipped whenever cookies are
-    # available, because tier1b (below) already succeeds reliably with
-    # cookies — trying android_vr first just burns ~15-20s on a bot-check
-    # failure before falling through to the tier that actually works.
-    # Only attempted when there are no cookies to fall back on at all.
-    tier1_err = "skipped (cookies available, going straight to tier1b)"
-    if not has_cookies:
-        tier1_opts = {**base_opts, "extractor_args": {"youtube": {"player_client": ["android_vr"]}}}
-        try:
-            stream_url = await loop.run_in_executor(None, _run, tier1_opts)
-            if stream_url:
-                logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1 android_vr): {video_id}")
-                return stream_url
-            tier1_err = "no formats returned"
-        except Exception as e:
-            tier1_err = str(e)
-
-    # Tier 1b: mweb + cookies. fetch_pot is left on "auto" (yt-dlp's
-    # default) — there is no bgutil POT provider running anymore (removed
-    # from start.sh to save RAM on Render's free tier), so forcing
-    # fetch_pot="always" just makes yt-dlp wait ~15s for a provider that
-    # doesn't exist before giving up and using cookies anyway. "auto" skips
-    # that wait entirely and goes straight to cookies-based resolution.
-    tier1b_opts = {
-        **base_opts,
-        "extractor_args": {
-            "youtube": {"player_client": ["mweb"]},
-        },
-        # TEMPORARY DIAGNOSTIC — remove verbose+logger once bottleneck found
-        "verbose": True,
-        "logger": _TimingLogger(),
-    }
-    if has_cookies:
-        tier1b_opts["cookiefile"] = cookies_path
+    hf_timeout = getattr(config, "HF_RESOLVER_TIMEOUT", 8)
     try:
-        stream_url = await loop.run_in_executor(None, _run, tier1b_opts)
-        if stream_url:
-            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1b mweb{'+cookies' if has_cookies else ''}): {video_id}")
-            return stream_url
-        tier1b_err = "no formats returned"
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=hf_timeout)
+        ) as session:
+            async with session.get(
+                f"{hf_resolver_url}/api/resolve", params={"v": video_id}, headers=_hf_headers()
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("ok") and data.get("stream_url"):
+                        logger.info(
+                            f"✅ [YTDLP-DIRECT] resolved via hf-space/{data.get('tier')} "
+                            f"in {data.get('elapsed')}s: {video_id}"
+                        )
+                        return data["stream_url"]
+                    logger.error(f"❌ [YTDLP-DIRECT] hf-space returned no url ({video_id}): {data.get('error')}")
+                else:
+                    logger.error(f"❌ [YTDLP-DIRECT] hf-space HTTP {resp.status} ({video_id})")
     except Exception as e:
-        tier1b_err = str(e)
-
-    # Tier 2: web_embedded/web + cookies — slow last resort (JS-challenge).
-    # (android_vr is never retried here — see docstring above.)
-    tier2_opts = {
-        **base_opts,
-        "extractor_args": {"youtube": {"player_client": ["web_embedded", "web"]}},
-    }
-    if has_cookies:
-        tier2_opts["cookiefile"] = cookies_path
-    try:
-        stream_url = await loop.run_in_executor(None, _run, tier2_opts)
-        if stream_url:
-            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier2 web fallback): {video_id}")
-            return stream_url
-        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier0={tier0_err} tier1={tier1_err} tier1b={tier1b_err} tier2=no formats returned")
-    except Exception as e:
-        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier0={tier0_err} tier1={tier1_err} tier1b={tier1b_err} tier2={e}")
+        logger.error(f"❌ [YTDLP-DIRECT] hf-space unreachable/timeout ({video_id}): {e}")
     return None
 
 
-# --- OPTIONAL: direct yt-dlp (+cookies) fast path -------------------------
-# Self-contained on purpose: if this misbehaves, set config.ENABLE_YTDLP_DIRECT_AUDIO
-# back to False (or delete this whole block + its one call-site below) and
-# everything reverts to the original SongCache -> TgScrap flow untouched.
-def _find_downloaded(video_id: str):
-    """Return whichever downloads/{video_id}.* file exists, any extension."""
+# --- Downloads (audio + video) now go entirely through the HF Space's
+# /api/download endpoint — it runs yt-dlp server-side and streams the
+# resulting file back over plain HTTP; we just save that stream to disk.
+# No yt-dlp import happens on Render for this at all anymore.
+def _find_downloaded(video_id: str, kind: str = "audio"):
+    """Return whichever downloads/{kind}_{video_id}.* file exists, any ext."""
     import glob
-    matches = glob.glob(os.path.join("downloads", f"{video_id}.*"))
-    # Ignore stray partial/temp files yt-dlp sometimes leaves behind.
+    matches = glob.glob(os.path.join("downloads", f"{kind}_{video_id}.*"))
     matches = [m for m in matches if not m.endswith((".part", ".ytdl", ".temp"))]
     return matches[0] if matches else None
 
 
-async def _download_audio_ytdlp(video_id: str) -> str:
+async def _hf_download(video_id: str, kind: str, format_id: str = None) -> str:
+    """Streams a file from the HF Space's /api/download endpoint straight
+    to local disk (downloads/{kind}_{video_id}.<ext from filename>).
+    Returns the local path, or None on any failure."""
     logger = LOGGER("YtDlpDirect/Youtube.py")
 
-    existing = _find_downloaded(video_id)
+    hf_resolver_url = _hf_base()
+    if not hf_resolver_url:
+        logger.warning(f"⚠️ [HF-DOWNLOAD] HF_RESOLVER_URL not set — {kind} download unavailable")
+        return None
+
+    existing = _find_downloaded(video_id, kind)
     if existing:
         return existing
 
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    ytdl_opts = {
-        # m4a preferred: no re-encode needed and it's what pytgcalls/ffmpeg
-        # plays natively. Falls back to whatever's best if m4a isn't offered.
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "outtmpl": os.path.join("downloads", f"{video_id}.%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        # NOTE: no "remote_components": ["ejs:github"] here — the JS
-        # solver is now bundled at build time via yt-dlp[default] in
-        # requirements.txt, instead of being fetched from GitHub on the
-        # first request after every cold start (that fetch was the ~18s
-        # delay you saw in the "live stream url resolved" log line).
-        # yt-dlp's default player_client list is "android_vr,web,web_safari".
-        # android_vr needs NO JS challenge solving at all, but web/web_safari
-        # do — and yt-dlp still queries those too, each one spinning up Deno
-        # to solve YouTube's signature challenge. That's the ~50s+ delay
-        # between "Starting download" and "download complete" in the logs.
-        # android_vr first (fast, no JS solving) — but some videos (made-
-        # for-kids, certain age/region-restricted ones) return NO usable
-        # formats on android_vr at all. Forcing android_vr ONLY (no
-        # fallback) made those hard-fail straight to the slow TgScrap path
-        # instead of just costing a few extra seconds of JS solving. Keep
-        # web_embedded/web as fallbacks so those videos still succeed here.
-        "extractor_args": {"youtube": {"player_client": ["android_vr", "web_embedded", "web"]}},
-        "socket_timeout": 15,
-        # NO postprocessors here on purpose. FFmpegExtractAudio->mp3 was a
-        # full audio re-encode of the whole track (several more seconds,
-        # scaling with song length + CPU load) that bought nothing: ffmpeg
-        # (both yt-dlp's own and pytgcalls' at playback time) plays m4a/opus
-        # directly, no mp3 conversion required. Serving the raw bestaudio
-        # file as-is is what actually gets playback started within seconds.
-    }
-
-    cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
-    if cookies_path and os.path.exists(cookies_path):
-        ytdl_opts["cookiefile"] = cookies_path
-    elif cookies_path:
-        logger.warning(f"⚠️ [YTDLP-DIRECT] cookies file not found at '{cookies_path}', continuing without it")
+    os.makedirs("downloads", exist_ok=True)
+    dl_timeout = getattr(config, "HF_RESOLVER_DOWNLOAD_TIMEOUT", 60)
+    params = {"v": video_id, "type": kind}
+    if format_id:
+        params["format"] = format_id
 
     try:
-        loop = asyncio.get_event_loop()
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=dl_timeout)
+        ) as session:
+            async with session.get(
+                f"{hf_resolver_url}/api/download", params=params, headers=_hf_headers()
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error(f"❌ [HF-DOWNLOAD] HTTP {resp.status} for {video_id}: {body[:200]}")
+                    return None
 
-        def _run():
-            import yt_dlp
-            with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
-                ydl.download([url])
+                # Extract extension from the Content-Disposition filename
+                # the Space sends (e.g. "audio_<id>.m4a" / "video_<id>.mp4").
+                cd = resp.headers.get("Content-Disposition", "")
+                ext = "m4a" if kind == "audio" else "mp4"
+                if "filename=" in cd:
+                    fname = cd.split("filename=")[-1].strip('"; ')
+                    if "." in fname:
+                        ext = fname.rsplit(".", 1)[-1]
 
-        await loop.run_in_executor(None, _run)
-
-        result = _find_downloaded(video_id)
-        if result:
-            logger.info(f"✅ [YTDLP-DIRECT] download complete: {video_id}")
-            return result
-
-        logger.error(f"❌ [YTDLP-DIRECT] file not found after download: {video_id}")
-        return None
+                dest = os.path.join("downloads", f"{kind}_{video_id}.{ext}")
+                tmp_dest = dest + ".part"
+                with open(tmp_dest, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(1024 * 256):
+                        f.write(chunk)
+                os.replace(tmp_dest, dest)
+                logger.info(f"✅ [HF-DOWNLOAD] {kind} download complete: {video_id}")
+                return dest
     except Exception as e:
-        logger.error(f"❌ [YTDLP-DIRECT] failed ({video_id}): {e}")
+        logger.error(f"❌ [HF-DOWNLOAD] failed ({kind}, {video_id}): {e}")
         return None
+
+
+async def _download_audio_ytdlp(video_id: str) -> str:
+    return await _hf_download(video_id, "audio")
 
 
 async def download_song(link: str, title: str = None) -> str:
@@ -386,12 +259,7 @@ async def download_song(link: str, title: str = None) -> str:
 
     os.makedirs("downloads", exist_ok=True)
 
-    # Cache check #1 — by video_id, BEFORE any network call. video_id is
-    # already known for free (parsed straight out of the link), so a
-    # repeat play of the exact same video can hit disk instantly with zero
-    # network round-trips. Previously _get_title() (a YouTube search call)
-    # ran unconditionally before any cache check at all, costing a network
-    # hop on every single replay even when the file was already on disk.
+    # Cache check #1 — by video_id, BEFORE any network call.
     from BROKENXMUSIC.utils import local_cache
     try:
         cached_path = await local_cache.get(video_id)
@@ -409,9 +277,6 @@ async def download_song(link: str, title: str = None) -> str:
     query = _clean_query(raw_title)
     logger.info(f"🔎 [AUDIO] Raw title: '{raw_title}' -> cleaned query: '{query}'")
 
-    # Cache check #2 — by cleaned query / raw title, for the case where the
-    # same song was previously cached under a *different* video_id (e.g. a
-    # duplicate upload) but the same title.
     try:
         cached_path = await local_cache.get(query) or await local_cache.get(raw_title)
         if cached_path:
@@ -421,10 +286,7 @@ async def download_song(link: str, title: str = None) -> str:
         logger.error(f"❌ [AUDIO] Local cache lookup failed: {e}")
 
     def _cache_in_background(key: str, path: str):
-        """Fire-and-forget: never let caching delay handing the file back.
-        Caches under BOTH the video_id and the title/query, so future
-        replays hit the fast video_id-only lookup above with no network
-        call at all, regardless of which key this play happened to use."""
+        """Fire-and-forget: never let caching delay handing the file back."""
         async def _do():
             try:
                 await local_cache.put(key, path)
@@ -434,9 +296,6 @@ async def download_song(link: str, title: str = None) -> str:
                 logger.error(f"❌ [AUDIO] Background local cache save failed for {key!r}: {e}")
         asyncio.create_task(_do())
 
-    # Optional legacy path: Mongo+Telegram channel cache. OFF by default
-    # now (config.ENABLE_SONG_CACHE=False) — set it True again to restore
-    # the old behaviour, nothing else to change.
     if config.ENABLE_SONG_CACHE:
         from BROKENXMUSIC import SongCache
         try:
@@ -449,11 +308,6 @@ async def download_song(link: str, title: str = None) -> str:
         except Exception as e:
             logger.error(f"❌ [AUDIO] Song Cache lookup failed: {e}")
 
-    # Primary path: live CDN streaming — resolve a direct URL and hand it
-    # back immediately (no download wait at all). The real download+cache
-    # still happens, just in the background, so a REPLAY of this song
-    # hits the instant/reliable local-disk cache instead of resolving a
-    # fresh streaming URL again.
     if getattr(config, "ENABLE_YTDLP_DIRECT_AUDIO", False):
         try:
             stream_url = await _get_stream_url_ytdlp(video_id)
@@ -473,9 +327,6 @@ async def download_song(link: str, title: str = None) -> str:
         except Exception as e:
             logger.error(f"❌ [AUDIO] live-stream resolve failed, falling back to download: {e}")
 
-    # Fallback: yt-dlp downloads the file to disk (fast — a couple of
-    # seconds — but not instant like the streaming path above). Used when
-    # streaming URL resolution itself fails for some reason.
     if getattr(config, "ENABLE_YTDLP_DIRECT_AUDIO", False):
         try:
             ytdlp_path = await _download_audio_ytdlp(video_id)
@@ -486,7 +337,6 @@ async def download_song(link: str, title: str = None) -> str:
         except Exception as e:
             logger.error(f"❌ [AUDIO] yt-dlp direct fast path failed, falling back to TgScrap: {e}")
 
-    # Last resort: TgScrap (VK-Music-style bot scrape via userbot).
     try:
         track_details, filepath = await _tgscrap.download(query)
     except Exception as e:
@@ -508,12 +358,26 @@ async def download_song(link: str, title: str = None) -> str:
     logger.info(f"✅ [AUDIO] TgScrap download complete: {query}")
     _cache_in_background(query, filepath)
     return filepath
+logger.info(f"↩️ [AUDIO] Cleaned query failed, retrying with raw title: '{raw_title}'")
+        try:
+            track_details, filepath = await _tgscrap.download(raw_title)
+        except Exception as e:
+            logger.error(f"❌ [AUDIO] TgScrap exception (raw title): {e}")
+            return None
+
+    if not filepath or not os.path.exists(filepath):
+        logger.error(f"❌ [AUDIO] TgScrap failed for: {query}")
+        return None
+
+    logger.info(f"✅ [AUDIO] TgScrap download complete: {query}")
+    _cache_in_background(query, filepath)
+    return filepath
 
 
 async def download_video(link: str) -> str:
     """
-    Tg-Scrap (VK Music bot) only serves audio, so video downloads still
-    go through yt-dlp directly (plain, no cookies configured).
+    Video downloads now go entirely through the HF Space's /api/download
+    endpoint (kind='video') instead of running yt-dlp locally on Render.
     """
     video_id = _extract_video_id(link)
     logger = LOGGER("YtDlp/Youtube.py")
@@ -523,79 +387,41 @@ async def download_video(link: str) -> str:
         logger.error(f"❌ [VIDEO] Invalid video ID: {video_id}")
         return None
 
-    os.makedirs("downloads", exist_ok=True)
-    file_path = os.path.join("downloads", f"{video_id}.mp4")
-
-    if os.path.exists(file_path):
-        logger.info(f"🎥 [LOCAL] File exists: {video_id}")
-        return file_path
-
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    ytdl_opts = {
-        "format": "bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4]/best",
-        "outtmpl": file_path.replace(".mp4", ".%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "merge_output_format": "mp4",
-        "noplaylist": True,
-    }
-
-    try:
-        loop = asyncio.get_event_loop()
-
-        def _run():
-            import yt_dlp  # lazy: audio-only playback (the common case) never needs this
-
-            with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
-                ydl.download([url])
-
-        await loop.run_in_executor(None, _run)
-
-        if os.path.exists(file_path):
-            logger.info(f"✅ [VIDEO] yt-dlp download complete: {video_id}")
-            return file_path
-
-        logger.error(f"❌ [VIDEO] File not found after download: {video_id}")
-        return None
-
-    except Exception as e:
-        logger.error(f"❌ [VIDEO] Exception: {e}")
-        return None
+    result = await _hf_download(video_id, "video")
+    if result:
+        logger.info(f"✅ [VIDEO] download complete: {video_id}")
+    else:
+        logger.error(f"❌ [VIDEO] download failed: {video_id}")
+    return result
 
 
 async def check_file_size(link):
-    async def get_format_info(link):
-        proc = await asyncio.create_subprocess_exec(
-            "yt-dlp",
-            "-J",
-            link,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            print(f'Error:\n{stderr.decode()}')
-            return None
-        return json.loads(stdout.decode())
-
-    def parse_size(formats):
-        total_size = 0
-        for format in formats:
-            if 'filesize' in format:
-                total_size += format['filesize']
-        return total_size
-
-    info = await get_format_info(link)
-    if info is None:
+    """Total filesize across all formats, now sourced from the HF Space's
+    /api/formats endpoint instead of shelling out to a local `yt-dlp` CLI
+    binary (which no longer exists on Render at all)."""
+    hf_resolver_url = _hf_base()
+    if not hf_resolver_url:
+        LOGGER("YtDlp/Youtube.py").warning("⚠️ [FILESIZE] HF_RESOLVER_URL not set")
         return None
 
-    formats = info.get('formats', [])
-    if not formats:
-        print("No formats found.")
+    video_id = _extract_video_id(link)
+    hf_timeout = getattr(config, "HF_RESOLVER_TIMEOUT", 8)
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=hf_timeout)
+        ) as session:
+            async with session.get(
+                f"{hf_resolver_url}/api/formats", params={"v": video_id}, headers=_hf_headers()
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                if data.get("ok"):
+                    return data.get("total_size")
+                return None
+    except Exception as e:
+        LOGGER("YtDlp/Youtube.py").error(f"❌ [FILESIZE] hf-space failed: {e}")
         return None
-
-    total_size = parse_size(formats)
-    return total_size
 
 
 async def shell_cmd(cmd):
@@ -720,14 +546,31 @@ class YouTubeAPI:
             link = self.listbase + link
         if "&" in link:
             link = link.split("&")[0]
-        playlist = await shell_cmd(
-            f"yt-dlp -i --get-id --flat-playlist --playlist-end {limit} --skip-download {link}"
-        )
+
+        hf_resolver_url = _hf_base()
+        if not hf_resolver_url:
+            LOGGER("YtDlp/Youtube.py").warning("⚠️ [PLAYLIST] HF_RESOLVER_URL not set")
+            return []
+
+        hf_timeout = getattr(config, "HF_RESOLVER_TIMEOUT", 8)
         try:
-            result = [key for key in playlist.split("\n") if key]
-        except:
-            result = []
-        return result
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=hf_timeout)
+            ) as session:
+                async with session.get(
+                    f"{hf_resolver_url}/api/playlist",
+                    params={"url": link, "limit": limit},
+                    headers=_hf_headers(),
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+                    if data.get("ok"):
+                        return data.get("ids", [])
+                    return []
+        except Exception as e:
+            LOGGER("YtDlp/Youtube.py").error(f"❌ [PLAYLIST] hf-space failed: {e}")
+            return []
 
     # --- UPDATED TRACK METHOD USING youtube_search ---
     async def track(self, link: str, videoid: Union[bool, str] = None):
@@ -785,32 +628,40 @@ class YouTubeAPI:
             return None, None
 
     async def formats(self, link: str, videoid: Union[bool, str] = None):
-        import yt_dlp  # lazy: only the /formats/quality-picker path needs this
-
         if videoid:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        ytdl_opts = {"quiet": True}
-        ydl = yt_dlp.YoutubeDL(ytdl_opts)
-        with ydl:
-            formats_available = []
-            r = ydl.extract_info(link, download=False)
-            for format in r["formats"]:
-                try:
-                    if "dash" not in str(format["format"]).lower():
-                        formats_available.append(
-                            {
-                                "format": format["format"],
-                                "filesize": format.get("filesize"),
-                                "format_id": format["format_id"],
-                                "ext": format["ext"],
-                                "format_note": format["format_note"],
-                                "yturl": link,
-                            }
-                        )
-                except:
-                    continue
+
+        hf_resolver_url = _hf_base()
+        if not hf_resolver_url:
+            LOGGER("YtDlp/Youtube.py").warning("⚠️ [FORMATS] HF_RESOLVER_URL not set")
+            return [], link
+
+        video_id = _extract_video_id(link)
+        hf_timeout = getattr(config, "HF_RESOLVER_TIMEOUT", 8)
+        formats_available = []
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=hf_timeout)
+            ) as session:
+                async with session.get(
+                    f"{hf_resolver_url}/api/formats", params={"v": video_id}, headers=_hf_headers()
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get("ok"):
+                            for f in data.get("formats", []):
+                                formats_available.append({
+                                    "format": f.get("format"),
+                                    "filesize": f.get("filesize"),
+                                    "format_id": f.get("format_id"),
+                                    "ext": f.get("ext"),
+                                    "format_note": f.get("format_note"),
+                                    "yturl": link,
+                                })
+        except Exception as e:
+            LOGGER("YtDlp/Youtube.py").error(f"❌ [FORMATS] hf-space failed: {e}")
         return formats_available, link
 
     async def slider(self, link: str, query_type: int, videoid: Union[bool, str] = None):
