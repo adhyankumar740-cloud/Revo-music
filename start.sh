@@ -14,9 +14,16 @@ echo "🔑 Authorizing Telegram Bot..."
 # shows up in the normal free-tier "Logs" tab instead, mixed in with the
 # rest of the boot log.
 echo "🔐 Starting PO Token provider (bgutil) on 127.0.0.1:4416..."
+echo "[POT] node version: $(node --version 2>&1 || echo 'node NOT FOUND')"
+echo "[POT] build file check:"
+ls -la /opt/bgutil-ytdlp-pot-provider/server/build/ 2>&1 | sed 's/^/[POT]   /'
 (
     while true; do
-        node /opt/bgutil-ytdlp-pot-provider/server/build/main.js 2>&1 | sed 's/^/[POT] /'
+        # stdbuf forces line-buffering — without it, piping node's stdout
+        # through sed can fully block-buffer it, silently hiding node's own
+        # startup logs (or crash messages) for a long time even though the
+        # process is actually running.
+        stdbuf -oL -eL node /opt/bgutil-ytdlp-pot-provider/server/build/main.js 2>&1 | stdbuf -oL sed 's/^/[POT] /'
         echo "[POT] $(date): server exited, restarting in 5s..."
         sleep 5
     done
@@ -26,11 +33,12 @@ echo "🔐 Starting PO Token provider (bgutil) on 127.0.0.1:4416..."
 # this alone (visible in the free Logs tab) tells you if it's actually up
 # without needing Shell access at all.
 (
-    sleep 5
-    if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4416/ping 2>/dev/null | grep -q "200\|404"; then
-        echo "[POT] ✅ reachable on 127.0.0.1:4416"
+    sleep 10
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:4416/ 2>&1)
+    if [ -n "$code" ] && [ "$code" != "000" ]; then
+        echo "[POT] ✅ reachable on 127.0.0.1:4416 (HTTP $code)"
     else
-        echo "[POT] ❌ NOT reachable on 127.0.0.1:4416 — check the [POT] lines above for a startup error"
+        echo "[POT] ❌ NOT reachable on 127.0.0.1:4416 (curl result: '$code') — check the [POT] lines above for a startup error"
     fi
 ) &
 
