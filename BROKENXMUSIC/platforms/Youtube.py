@@ -156,6 +156,14 @@ async def _get_stream_url_ytdlp(video_id: str):
         "no_warnings": True,
         "noplaylist": True,
         "socket_timeout": 15,
+        # Explicit, guaranteed-writable cache dir (survives for the whole
+        # container run, wiped only on restart — fine now that restarts are
+        # rare). yt-dlp caches its nsig/JS-challenge solution per player
+        # version here, so once the FIRST song after a boot pays the ~16s
+        # JS-challenge cost, every later song reuses that cached solution
+        # instead of re-solving it — should drop to ~1-2s until YouTube
+        # ships a new player version (happens every few weeks, not daily).
+        "cachedir": os.path.join(os.getcwd(), ".ytdlp_cache"),
         # NOTE: no "remote_components": ["ejs:github"] here on purpose —
         # that fetched the JS solver from GitHub over the network on the
         # FIRST YouTube request after every cold start/restart (~15-20s on
@@ -175,29 +183,12 @@ async def _get_stream_url_ytdlp(video_id: str):
     cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
     has_cookies = bool(cookies_path and os.path.exists(cookies_path))
 
-    # Tier 0: android + cookies. Unlike android_vr, the plain "android"
-    # client accepts cookies AND skips the browser-style JS-challenge that
-    # makes mweb/web slow on Render's weak free-tier CPU — so when it
-    # works, it's the fastest path by far (~2-3s vs ~15-20s). Not
-    # guaranteed to always work (YouTube sometimes bot-blocks it too), so
-    # on any failure this just falls through to the tiers below unchanged.
-    # Short socket_timeout here so a failure is cheap, not a 15s wait.
-    tier0_err = "skipped (no cookies)"
-    if has_cookies:
-        tier0_opts = {
-            **base_opts,
-            "socket_timeout": 8,
-            "extractor_args": {"youtube": {"player_client": ["android"]}},
-            "cookiefile": cookies_path,
-        }
-        try:
-            stream_url = await loop.run_in_executor(None, _run, tier0_opts)
-            if stream_url:
-                logger.info(f"✅ [YTDLP-DIRECT] resolved (tier0 android+cookies, fast path): {video_id}")
-                return stream_url
-            tier0_err = "no formats returned"
-        except Exception as e:
-            tier0_err = str(e)
+    # NOTE: an "android + cookies" fast-path tier was tried here and removed
+    # — it failed on every video tested ("Requested format is not
+    # available", YouTube restricts android's format list once cookies are
+    # attached) and only added latency before falling through to tier1b
+    # below, which is the tier that actually works reliably.
+    tier0_err = "removed (failed on every video tested)"
 
     # Tier 1: android_vr only, no cookies. Skipped whenever cookies are
     # available, because tier1b (below) already succeeds reliably with
