@@ -476,3 +476,90 @@ class YouTubeAPI:
             return title, duration_min, duration_sec, thumbnail, vidid
         except:
             return None, None, None, None, None
+
+    async def track(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+
+        title, duration_min, duration_sec, thumbnail, vidid = await self.details(link)
+        if not title or not vidid:
+            return None, None
+
+        track_details = {
+            "title": title,
+            "link": self.base + vidid,
+            "vidid": vidid,
+            "duration_min": duration_min,
+            "duration_sec": duration_sec,
+            "thumb": thumbnail,
+        }
+        return track_details, vidid
+
+    async def playlist(self, link: str, limit: int, user_id, videoid: Union[bool, str] = None):
+        """Lightweight playlist scrape (no yt-dlp on Render): fetch the
+        playlist page HTML directly and regex out the videoIds embedded
+        in it, in order, deduped, up to `limit`."""
+        logger = LOGGER("Youtube.py")
+        if videoid:
+            link = self.listbase + link
+        if "&" in link:
+            link = link.split("&")[0]
+
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.get(
+                    link,
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/125.0.0.0 Safari/537.36"
+                        )
+                    },
+                ) as resp:
+                    html = await resp.text(errors="ignore")
+
+            ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+            result = []
+            for vid in ids:
+                if vid not in result:
+                    result.append(vid)
+                if len(result) >= limit:
+                    break
+            return result
+        except Exception as e:
+            logger.error(f"❌ [PLAYLIST] fetch failed for {link}: {e}")
+            return []
+
+    async def download(
+        self,
+        link: str,
+        mystic=None,
+        video: Union[bool, str] = None,
+        videoid: Union[bool, str] = None,
+        songaudio: Union[bool, str] = None,
+        songvideo: Union[bool, str] = None,
+        format_id: str = None,
+        title: str = None,
+    ):
+        if videoid:
+            link = self.base + link
+
+        if songvideo or video:
+            file_path = await download_video(link)
+        else:
+            file_path = await download_song(link, title)
+
+        if not file_path:
+            return None, True
+
+        # A path starting with http(s) is a live-resolved CDN stream URL
+        # (short-lived, shouldn't be cached/persisted in the queue). Any
+        # local filesystem path is a real downloaded file that can be
+        # reused, so it's safe to mark as "direct".
+        direct = not str(file_path).startswith(("http://", "https://"))
+        return file_path, direct
