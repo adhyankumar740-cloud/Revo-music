@@ -142,26 +142,56 @@ async def _get_stream_url_ytdlp(video_id: str):
         return None
 
     hf_timeout = getattr(config, "HF_RESOLVER_TIMEOUT", 8)
-    try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=hf_timeout)
-        ) as session:
-            async with session.get(
-                f"{hf_resolver_url}/api/resolve", params={"v": video_id}, headers=_hf_headers()
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get("ok") and data.get("stream_url"):
-                        logger.info(
-                            f"✅ [YTDLP-DIRECT] resolved via hf-space/{data.get('tier')} "
-                            f"in {data.get('elapsed')}s: {video_id}"
+    max_attempts = getattr(config, "HF_RESOLVER_RETRIES", 2)  # total tries, not extra retries
+    retry_delay = getattr(config, "HF_RESOLVER_RETRY_DELAY", 1.5)  # seconds
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=hf_timeout)
+            ) as session:
+                async with session.get(
+                    f"{hf_resolver_url}/api/resolve", params={"v": video_id}, headers=_hf_headers()
+                ) as resp:
+                    if resp.status == 200:
+                        ctype = resp.content_type or ""
+                        if "json" not in ctype:
+                            # HF Space is between deploys / cold-starting / had a
+                            # transient hiccup and served its HTML holding page
+                            # instead of the real API response. This is NOT a
+                            # real failure — retry after a short delay.
+                            body_preview = (await resp.text())[:120]
+                            logger.warning(
+                                f"⚠️ [YTDLP-DIRECT] hf-space returned non-JSON "
+                                f"(content-type={ctype!r}, attempt {attempt}/{max_attempts}) "
+                                f"({video_id}): {body_preview!r}"
+                            )
+                        else:
+                            data = await resp.json()
+                            if data.get("ok") and data.get("stream_url"):
+                                logger.info(
+                                    f"✅ [YTDLP-DIRECT] resolved via hf-space/{data.get('tier')} "
+                                    f"in {data.get('elapsed')}s: {video_id}"
+                                )
+                                return data["stream_url"]
+                            logger.error(
+                                f"❌ [YTDLP-DIRECT] hf-space returned no url ({video_id}): {data.get('error')}"
+                            )
+                            break  # real API error, not a transient issue — don't retry
+                    else:
+                        logger.error(
+                            f"❌ [YTDLP-DIRECT] hf-space HTTP {resp.status} "
+                            f"(attempt {attempt}/{max_attempts}) ({video_id})"
                         )
-                        return data["stream_url"]
-                    logger.error(f"❌ [YTDLP-DIRECT] hf-space returned no url ({video_id}): {data.get('error')}")
-                else:
-                    logger.error(f"❌ [YTDLP-DIRECT] hf-space HTTP {resp.status} ({video_id})")
-    except Exception as e:
-        logger.error(f"❌ [YTDLP-DIRECT] hf-space unreachable/timeout ({video_id}): {e}")
+        except Exception as e:
+            logger.error(
+                f"❌ [YTDLP-DIRECT] hf-space unreachable/timeout "
+                f"(attempt {attempt}/{max_attempts}) ({video_id}): {e}"
+            )
+
+        if attempt < max_attempts:
+            await asyncio.sleep(retry_delay)
+
     return None
 
 
