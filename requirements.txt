@@ -19,6 +19,7 @@ tgcrypto
 unidecode
 py-yt-search
 yt-dlp[default]
+bgutil-ytdlp-pot-provider
 youtube-search
 youtube-search-python
 httpx
