@@ -117,12 +117,22 @@ async def _get_stream_url_ytdlp(video_id: str):
     direct-URL playback already does (see _build_stream / join_call).
 
     Speed tiers, cheapest first:
-      1. android_vr, no cookies -> no JS-challenge, no auth. Fastest path,
-         works whenever YouTube doesn't bot-flag this server's IP.
+      1. android_vr, no cookies -> no JS-challenge, no auth. Tried first
+         since it's free/instant, but currently gets bot-blocked on this
+         IP most of the time (its own DroidGuard-based attestation isn't
+         something our POT provider can supply — see note below).
+      1b. mweb, with POT token -> yt-dlp's own officially recommended
+         setup ("PO Token Guide" wiki TL;DR: use a POT provider plugin
+         for the mweb client). This is the client our bgutil POT provider
+         actually helps — it does NOT help android_vr at all, they use
+         completely different attestation systems (web-based BotGuard vs
+         Android's DroidGuard). mweb is still a "web-family" client so it
+         may still need the Deno JS-challenge for signature descrambling
+         on some formats — POT only removes the bot-check/403, not that.
       2. web_embedded + web, with cookies -> last resort, used whenever
-         tier 1 fails for ANY reason (bot-check, age/region-restricted,
-         made-for-kids, etc). This is the only tier that pays the Deno
-         JS-challenge cost (~11-20s on Render's free-tier CPU).
+         both of the above fail for ANY reason (age/region-restricted,
+         made-for-kids, etc). This is the tier most likely to pay the
+         Deno JS-challenge cost (~11-20s on Render's free-tier CPU).
 
     There used to be a middle "android_vr + cookies" tier here. It has been
     removed: yt-dlp silently SKIPS the android_vr client the instant cookies
@@ -165,7 +175,7 @@ async def _get_stream_url_ytdlp(video_id: str):
     cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
     has_cookies = bool(cookies_path and os.path.exists(cookies_path))
 
-    # Tier 1: android_vr only, no cookies — fastest possible path.
+    # Tier 1: android_vr only, no cookies — free to try, occasionally works.
     tier1_opts = {**base_opts, "extractor_args": {"youtube": {"player_client": ["android_vr"]}}}
     try:
         stream_url = await loop.run_in_executor(None, _run, tier1_opts)
@@ -175,6 +185,27 @@ async def _get_stream_url_ytdlp(video_id: str):
         tier1_err = "no formats returned"
     except Exception as e:
         tier1_err = str(e)
+
+    # Tier 1b: mweb + POT token (via the bgutil provider from Dockerfile/
+    # start.sh). fetch_pot=always forces yt-dlp to actually request a token
+    # from our provider instead of only doing so if it thinks the client
+    # needs one — the "auto" default has been unreliable while YouTube is
+    # still mid-rollout on requiring this per the PO Token Guide.
+    tier1b_opts = {
+        **base_opts,
+        "extractor_args": {
+            "youtube": {"player_client": ["mweb"]},
+            "youtubepot-bgutilhttp": {"fetch_pot": ["always"]},
+        },
+    }
+    try:
+        stream_url = await loop.run_in_executor(None, _run, tier1b_opts)
+        if stream_url:
+            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1b mweb+POT): {video_id}")
+            return stream_url
+        tier1b_err = "no formats returned"
+    except Exception as e:
+        tier1b_err = str(e)
 
     # Tier 2: web_embedded/web + cookies — slow last resort (JS-challenge).
     # (android_vr is never retried here — see docstring above.)
@@ -189,9 +220,9 @@ async def _get_stream_url_ytdlp(video_id: str):
         if stream_url:
             logger.info(f"✅ [YTDLP-DIRECT] resolved (tier2 web fallback): {video_id}")
             return stream_url
-        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier2=no formats returned")
+        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier1b={tier1b_err} tier2=no formats returned")
     except Exception as e:
-        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier2={e}")
+        logger.error(f"❌ [YTDLP-DIRECT] all tiers failed ({video_id}): tier1={tier1_err} tier1b={tier1b_err} tier2={e}")
     return None
 
 
