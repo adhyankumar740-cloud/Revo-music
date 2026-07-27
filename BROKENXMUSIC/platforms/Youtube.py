@@ -175,16 +175,22 @@ async def _get_stream_url_ytdlp(video_id: str):
     cookies_path = getattr(config, "YTDLP_COOKIES_FILE", "").strip()
     has_cookies = bool(cookies_path and os.path.exists(cookies_path))
 
-    # Tier 1: android_vr only, no cookies — free to try, occasionally works.
-    tier1_opts = {**base_opts, "extractor_args": {"youtube": {"player_client": ["android_vr"]}}}
-    try:
-        stream_url = await loop.run_in_executor(None, _run, tier1_opts)
-        if stream_url:
-            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1 android_vr): {video_id}")
-            return stream_url
-        tier1_err = "no formats returned"
-    except Exception as e:
-        tier1_err = str(e)
+    # Tier 1: android_vr only, no cookies. Skipped whenever cookies are
+    # available, because tier1b (below) already succeeds reliably with
+    # cookies — trying android_vr first just burns ~15-20s on a bot-check
+    # failure before falling through to the tier that actually works.
+    # Only attempted when there are no cookies to fall back on at all.
+    tier1_err = "skipped (cookies available, going straight to tier1b)"
+    if not has_cookies:
+        tier1_opts = {**base_opts, "extractor_args": {"youtube": {"player_client": ["android_vr"]}}}
+        try:
+            stream_url = await loop.run_in_executor(None, _run, tier1_opts)
+            if stream_url:
+                logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1 android_vr): {video_id}")
+                return stream_url
+            tier1_err = "no formats returned"
+        except Exception as e:
+            tier1_err = str(e)
 
     # Tier 1b: mweb + POT token (via the bgutil provider from Dockerfile/
     # start.sh). fetch_pot=always forces yt-dlp to actually request a token
