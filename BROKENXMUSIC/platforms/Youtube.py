@@ -290,13 +290,18 @@ async def _download_audio_ytdlp(video_id: str) -> str:
         return None
 
 
-async def download_song(link: str) -> str:
+async def download_song(link: str, title: str = None) -> str:
     """
     Audio downloads: local disk cache first (plain files, no Mongo/Telegram
     round-trip), then yt-dlp direct (fast path), then Tg-Scrap as the last
     resort. Any successful download is handed back for playback IMMEDIATELY
     — caching it for next time happens in a background task afterwards, so
     it never adds latency to the current play.
+
+    `title`, if the caller already has it (e.g. from the search results
+    used to build the "Now Playing" message), skips the redundant
+    _get_title() YouTube search that would otherwise re-fetch the exact
+    same title info this function's caller usually already looked up.
     """
     video_id = _extract_video_id(link)
     logger = LOGGER("TgScrap/Youtube.py")
@@ -308,14 +313,32 @@ async def download_song(link: str) -> str:
 
     os.makedirs("downloads", exist_ok=True)
 
-    raw_title = await _get_title(video_id)
+    # Cache check #1 — by video_id, BEFORE any network call. video_id is
+    # already known for free (parsed straight out of the link), so a
+    # repeat play of the exact same video can hit disk instantly with zero
+    # network round-trips. Previously _get_title() (a YouTube search call)
+    # ran unconditionally before any cache check at all, costing a network
+    # hop on every single replay even when the file was already on disk.
+    from BROKENXMUSIC.utils import local_cache
+    try:
+        cached_path = await local_cache.get(video_id)
+        if cached_path:
+            logger.info(f"✅ [AUDIO] Local disk cache hit (by video_id, no lookup needed): {video_id}")
+            return cached_path
+    except Exception as e:
+        logger.error(f"❌ [AUDIO] Local cache (video_id) lookup failed: {e}")
+
+    if title:
+        raw_title = title
+        logger.info(f"🔎 [AUDIO] Using caller-supplied title (skipped search): '{raw_title}'")
+    else:
+        raw_title = await _get_title(video_id)
     query = _clean_query(raw_title)
     logger.info(f"🔎 [AUDIO] Raw title: '{raw_title}' -> cleaned query: '{query}'")
 
-    # Plain local disk cache — no Mongo, no Telegram, just a filesystem
-    # read. Checked first regardless of the (now-optional, off-by-default)
-    # SongCache system below.
-    from BROKENXMUSIC.utils import local_cache
+    # Cache check #2 — by cleaned query / raw title, for the case where the
+    # same song was previously cached under a *different* video_id (e.g. a
+    # duplicate upload) but the same title.
     try:
         cached_path = await local_cache.get(query) or await local_cache.get(raw_title)
         if cached_path:
@@ -325,10 +348,15 @@ async def download_song(link: str) -> str:
         logger.error(f"❌ [AUDIO] Local cache lookup failed: {e}")
 
     def _cache_in_background(key: str, path: str):
-        """Fire-and-forget: never let caching delay handing the file back."""
+        """Fire-and-forget: never let caching delay handing the file back.
+        Caches under BOTH the video_id and the title/query, so future
+        replays hit the fast video_id-only lookup above with no network
+        call at all, regardless of which key this play happened to use."""
         async def _do():
             try:
                 await local_cache.put(key, path)
+                if key != video_id:
+                    await local_cache.put(video_id, path)
             except Exception as e:
                 logger.error(f"❌ [AUDIO] Background local cache save failed for {key!r}: {e}")
         asyncio.create_task(_do())
@@ -764,7 +792,7 @@ class YouTubeAPI:
                 else:
                     return None, False
             else:
-                downloaded_file = await download_song(link)
+                downloaded_file = await download_song(link, title=title if isinstance(title, str) else None)
                 if downloaded_file:
                     return downloaded_file, True
                 else:
