@@ -75,7 +75,7 @@ async def stream(
                 status = True if video else None
                 try:
                     file_path, direct = await YouTube.download(
-                        vidid, mystic, video=status, videoid=True
+                        vidid, mystic, video=status, videoid=True, title=title
                     )
                 except:
                     raise AssistantErr(_["play_14"])
@@ -154,7 +154,7 @@ async def stream(
         status = True if video else None
         try:
             file_path, direct = await YouTube.download(
-                vidid, mystic, videoid=True, video=status
+                vidid, mystic, videoid=True, video=status, title=title
             )
         except:
             raise AssistantErr(_["play_14"])
