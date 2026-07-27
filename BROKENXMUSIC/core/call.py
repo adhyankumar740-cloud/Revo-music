@@ -364,6 +364,7 @@ class Call(PyTgCalls):
                     mystic,
                     videoid=True,
                     video=video,
+                    title=title,
                 )
             except Exception:
                 return await mystic.edit_text(
