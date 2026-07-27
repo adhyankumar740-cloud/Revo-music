@@ -502,6 +502,7 @@ async def play_commnd(
         except Exception as e:
             # DEBUG MODE: ERROR PRINT ON CHAT
             exx = traceback.format_exc()
+            print(f"[Direct Stream Error] {e}\n{exx}")
             await mystic.edit_text(f"❌ **Error in Direct Stream:**\n\nServer Connection Timeout\n")
             return
         await mystic.delete()
