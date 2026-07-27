@@ -29,16 +29,33 @@ ls -la /opt/bgutil-ytdlp-pot-provider/server/build/ 2>&1 | sed 's/^/[POT]   /'
     done
 ) &
 
-# Give the server a moment to bind, then log a plain reachability check —
-# this alone (visible in the free Logs tab) tells you if it's actually up
-# without needing Shell access at all.
+# Poll instead of a single one-shot check — the server can take 15-20+
+# seconds to actually start listening (BotGuard/canvas init), so a single
+# early check can wrongly report "not reachable" when it just needed more
+# time. This also lets us tell that apart from a REAL problem (e.g. it
+# only bound its IPv6 wildcard [::]:4416 and this container doesn't route
+# 127.0.0.1 to that — if so, this loop will still say unreachable even
+# after 40s, which is the actual signal to look for).
 (
-    sleep 10
-    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:4416/ 2>&1)
-    if [ -n "$code" ] && [ "$code" != "000" ]; then
-        echo "[POT] ✅ reachable on 127.0.0.1:4416 (HTTP $code)"
-    else
-        echo "[POT] ❌ NOT reachable on 127.0.0.1:4416 (curl result: '$code') — check the [POT] lines above for a startup error"
+    reachable=0
+    for i in $(seq 1 8); do
+        sleep 5
+        code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:4416/ 2>&1)
+        if [ -n "$code" ] && [ "$code" != "000" ]; then
+            echo "[POT] ✅ reachable on 127.0.0.1:4416 after ${i}x5s (HTTP $code)"
+            reachable=1
+            break
+        fi
+    done
+    if [ "$reachable" -eq 0 ]; then
+        echo "[POT] ❌ still NOT reachable on 127.0.0.1:4416 after 40s via IPv4."
+        echo "[POT]    Trying IPv6 loopback instead..."
+        code6=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -g "http://[::1]:4416/" 2>&1)
+        if [ -n "$code6" ] && [ "$code6" != "000" ]; then
+            echo "[POT] ⚠️ reachable via [::1]:4416 (IPv6) but NOT via 127.0.0.1 (IPv4, HTTP $code6) — this container is IPv6-only for loopback binds, need to force the server onto IPv4 explicitly."
+        else
+            echo "[POT] ❌ NOT reachable via IPv6 either (HTTP $code6) — something else is wrong, not just an IPv4/IPv6 mismatch."
+        fi
     fi
 ) &
 
