@@ -1,4 +1,4 @@
-"""© 2026 BROKEN X NETWORK | All Rights Reserved"""
+ """© 2026 BROKEN X NETWORK | All Rights Reserved"""
 # 2024 - 2026 ©️ BROKEN X NETWORK | ALL RIGHTS RESERVED 
 # MADE WITH ❤️ BY MR BROKEN
 # FOR UPDATES JOIN TG: @BROKENXNETWORK1 & @ABOUTBROKENX
@@ -191,16 +191,23 @@ async def _get_stream_url_ytdlp(video_id: str):
     # from our provider instead of only doing so if it thinks the client
     # needs one — the "auto" default has been unreliable while YouTube is
     # still mid-rollout on requiring this per the PO Token Guide.
+    #
+    # Cookies are attached here too (unlike android_vr, mweb can actually
+    # use them) — a real POT token alone still got bot-blocked in testing,
+    # so this combines both signals: cookies for session/account trust,
+    # POT token for client attestation.
     tier1b_opts = {
         **base_opts,
         "extractor_args": {
             "youtube": {"player_client": ["mweb"], "fetch_pot": ["always"]},
         },
     }
+    if has_cookies:
+        tier1b_opts["cookiefile"] = cookies_path
     try:
         stream_url = await loop.run_in_executor(None, _run, tier1b_opts)
         if stream_url:
-            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1b mweb+POT): {video_id}")
+            logger.info(f"✅ [YTDLP-DIRECT] resolved (tier1b mweb+POT{'+cookies' if has_cookies else ''}): {video_id}")
             return stream_url
         tier1b_err = "no formats returned"
     except Exception as e:
