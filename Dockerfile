@@ -5,8 +5,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     unzip \
-    nodejs \
-    npm \
+    ca-certificates \
+    gnupg \
+    build-essential \
+    python3 \
+    pkg-config \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libjpeg-dev \
+    libgif-dev \
+    librsvg2-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 20.x via NodeSource — Debian's own "apt install nodejs" package is
+# only v18, but bgutil-ytdlp-pot-provider (below) requires Node.js >= 20.
+# An older Node can fail silently on some of its native deps instead of
+# printing an obvious crash, which is exactly what happened here.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -27,10 +44,14 @@ ENV PATH="/usr/local/bin:${PATH}"
 # tokens; yt-dlp's Python plugin (installed via requirements.txt) picks it
 # up automatically at its default address — no extra yt-dlp options needed
 # anywhere in the bot's own code.
-RUN npm install -g yarn \
-    && git clone --depth 1 --branch 0.6.0 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil-ytdlp-pot-provider \
+#
+# NOTE: pinned to 1.3.1, the current stable release as of writing — an
+# earlier version of this Dockerfile mistakenly cloned the ancient 0.6.0
+# branch (pre-dates the current npm-based install method entirely, used
+# yarn instead) which silently failed to produce a working server.
+RUN git clone --depth 1 --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil-ytdlp-pot-provider \
     && cd /opt/bgutil-ytdlp-pot-provider/server \
-    && yarn install --frozen-lockfile \
+    && npm ci \
     && npx tsc
 
 WORKDIR /app
