@@ -65,6 +65,12 @@ YTDLP_COOKIES_FILE = getenv("YTDLP_COOKIES_FILE", "cookies.txt")
 HF_RESOLVER_URL = getenv("HF_RESOLVER_URL", "").strip().rstrip("/")
 HF_RESOLVER_TIMEOUT = float(getenv("HF_RESOLVER_TIMEOUT", 8))
 HF_RESOLVER_DOWNLOAD_TIMEOUT = float(getenv("HF_RESOLVER_DOWNLOAD_TIMEOUT", 60))
+# /api/resolve occasionally gets a transient non-JSON response from the HF
+# Space (cold-start holding page, brief redeploy, edge hiccup) even while the
+# Space is otherwise healthy. Retry a couple of times with a short delay
+# before giving up and falling back to the local tiers.
+HF_RESOLVER_RETRIES = int(getenv("HF_RESOLVER_RETRIES", 2))
+HF_RESOLVER_RETRY_DELAY = float(getenv("HF_RESOLVER_RETRY_DELAY", 1.5))
 # Must match the RESOLVER_API_KEY secret set on the HF Space.
 HF_RESOLVER_API_KEY = getenv("HF_RESOLVER_API_KEY", "").strip()
 # CDN Cache is an unfinished feature (no CDNCache module exists yet) — keep off.
