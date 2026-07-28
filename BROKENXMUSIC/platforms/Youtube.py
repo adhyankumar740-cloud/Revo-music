@@ -603,6 +603,76 @@ class YouTubeAPI:
         }
         return track_details, vidid
 
+    async def race_download(self, query: str, tgscrap_coro):
+        """
+        Race TgScrap's progressive FIFO stream (`tgscrap_coro`, already
+        created by the caller) against this module's own direct yt-dlp
+        (HF Space) resolve+download for the same query. Whichever side
+        produces a real, playable result first wins and the other side
+        is cancelled — this is what makes ENABLE_TG_SCRAP_PLAY actually
+        fast instead of the caller falling through to the slower
+        slider/search flow every single time.
+
+        Returns (track_details, filepath_or_stream_url) in the same
+        shape TgScrap.download()/stream_or_download() use — i.e. a dict
+        with "title", "duration_min", "filepath" — or (None, None) if
+        both sides fail.
+        """
+        logger = LOGGER("Youtube.py")
+
+        async def _direct():
+            try:
+                results = await _search_youtube(query, 1)
+                if not results:
+                    return None, None
+                result = results[0]
+                vidid = result.get("id")
+                if not vidid:
+                    return None, None
+                raw_title = result.get("title") or query
+                link = self.base + vidid
+                filepath = await download_song(link, raw_title)
+                if not filepath:
+                    return None, None
+                track_details = {
+                    "title": raw_title,
+                    "duration_min": result.get("duration") or "00:00",
+                    "filepath": filepath,
+                }
+                return track_details, filepath
+            except Exception as e:
+                logger.error(f"❌ [RACE] direct branch failed for {query!r}: {e}")
+                return None, None
+
+        tg_task = asyncio.ensure_future(tgscrap_coro)
+        direct_task = asyncio.ensure_future(_direct())
+        pending = {tg_task, direct_task}
+
+        try:
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    try:
+                        details, path = task.result()
+                    except Exception as e:
+                        logger.error(f"❌ [RACE] a branch raised for {query!r}: {e}")
+                        details, path = None, None
+                    if details and path:
+                        for p in pending:
+                            p.cancel()
+                        winner = "tgscrap" if task is tg_task else "direct"
+                        logger.info(f"✅ [RACE] {winner} won for {query!r}")
+                        return details, path
+            return None, None
+        except Exception as e:
+            logger.error(f"❌ [RACE] failed entirely for {query!r}: {e}")
+            for t in (tg_task, direct_task):
+                if not t.done():
+                    t.cancel()
+            return None, None
+
     async def playlist(self, link: str, limit: int, user_id, videoid: Union[bool, str] = None):
         """Lightweight playlist scrape (no yt-dlp on Render): fetch the
         playlist page HTML directly and regex out the videoIds embedded
