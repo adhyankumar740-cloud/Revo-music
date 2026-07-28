@@ -25,6 +25,13 @@ TG_SCRAP_MENU_TIMEOUT = int(getenv("TG_SCRAP_MENU_TIMEOUT", 15))  # wait for the
 TG_SCRAP_TIMEOUT = int(getenv("TG_SCRAP_TIMEOUT", 30))  # wait for the audio file after clicking
 TG_SCRAP_MAX_MENU_HOPS = int(getenv("TG_SCRAP_MAX_MENU_HOPS", 3))  # nested menus to click through
 
+# How long (seconds) YouTube.race_download() lets the direct HF-resolver
+# path run alone before it wakes vkmusic_bot up at all. Raise this if
+# direct is winning fast but you still see occasional slow songs falling
+# through late; lower it if you'd rather have TgScrap start earlier as a
+# safety net at the cost of hitting vkmusic_bot more often.
+RACE_DIRECT_HEAD_START = float(getenv("RACE_DIRECT_HEAD_START", 4))
+
 # ⚠️ Your own archived channels (the ones you've been building up for years).
 # Comma separated list of usernames / numeric chat ids, e.g.
 # "mymusicarchive,-1001234567890,another_channel"
