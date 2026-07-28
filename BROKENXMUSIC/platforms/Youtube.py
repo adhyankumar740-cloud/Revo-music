@@ -605,13 +605,19 @@ class YouTubeAPI:
 
     async def race_download(self, query: str, tgscrap_coro):
         """
-        Race TgScrap's progressive FIFO stream (`tgscrap_coro`, already
-        created by the caller) against this module's own direct yt-dlp
-        (HF Space) resolve+download for the same query. Whichever side
-        produces a real, playable result first wins and the other side
-        is cancelled — this is what makes ENABLE_TG_SCRAP_PLAY actually
-        fast instead of the caller falling through to the slower
-        slider/search flow every single time.
+        Give this module's own direct yt-dlp (HF Space) resolve+download a
+        head start, and only wake vkmusic_bot up (`tgscrap_coro`, already
+        created by the caller) if direct hasn't produced a real, playable
+        result within RACE_DIRECT_HEAD_START seconds (config, default 4s)
+        — either because it's still running or because it failed outright.
+
+        This used to start both branches unconditionally on every single
+        play. Direct wins the vast majority of the time (~2-4s HF resolve
+        round trip in practice), so racing TgScrap every time did nothing
+        but hit vkmusic_bot (search message + menu clicks + polling) for
+        no benefit on almost every request — wasted load on that account
+        and real flood-wait/ban risk for no upside. Now TgScrap only gets
+        involved when it's an actual fallback, not a formality.
 
         Returns (track_details, filepath_or_stream_url) in the same
         shape TgScrap.download()/stream_or_download() use — i.e. a dict
@@ -644,9 +650,37 @@ class YouTubeAPI:
                 logger.error(f"❌ [RACE] direct branch failed for {query!r}: {e}")
                 return None, None
 
-        tg_task = asyncio.ensure_future(tgscrap_coro)
         direct_task = asyncio.ensure_future(_direct())
-        pending = {tg_task, direct_task}
+
+        # Phase 1: let direct run alone for a bit. vkmusic_bot is not
+        # touched at all during this window.
+        head_start = getattr(config, "RACE_DIRECT_HEAD_START", 4)
+        done, _ = await asyncio.wait({direct_task}, timeout=head_start)
+
+        if direct_task in done:
+            try:
+                details, path = direct_task.result()
+            except Exception as e:
+                logger.error(f"❌ [RACE] direct branch failed for {query!r}: {e}")
+                details, path = None, None
+            if details and path:
+                logger.info(
+                    f"✅ [RACE] direct won for {query!r} (vkmusic_bot never touched)"
+                )
+                return details, path
+            logger.info(
+                f"↩️ [RACE] direct failed fast for {query!r} — falling back to vkmusic_bot"
+            )
+        else:
+            logger.info(
+                f"⏳ [RACE] direct still running for {query!r} after {head_start}s — "
+                f"starting vkmusic_bot fallback in parallel"
+            )
+
+        # Phase 2: direct either failed or is taking too long — now, and
+        # only now, start TgScrap and race whatever's left.
+        tg_task = asyncio.ensure_future(tgscrap_coro)
+        pending = {tg_task} if direct_task.done() else {tg_task, direct_task}
 
         try:
             while pending:
