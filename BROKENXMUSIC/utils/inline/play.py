@@ -65,16 +65,16 @@ def stream_markup_timer(_, chat_id, played, dur):
         [
             InlineKeyboardButton(
 
-                text="『ᴏᴡɴᴇʀ』",
+                text="『😈ᴏᴡɴᴇʀ✨』",
 
-                url=f"tg://user?id={config.OWNER_ID}",
+                callback_data="show_owner",
 
             ),
             InlineKeyboardButton(
 
-                text="『sᴜᴘᴘᴏʀᴛ』",
+                text="『🖤sᴜᴘᴘᴏʀᴛ😈』",
 
-                url=config.SUPPORT_CHANNEL,
+                url=config.SUPPORT_CHAT,
 
             ),
        ],
@@ -99,16 +99,16 @@ def stream_markup(_, chat_id):
         [
             InlineKeyboardButton(
 
-                text="『ᴏᴡɴᴇʀ』",
+                text="『😈ᴏᴡɴᴇʀ✨』",
 
-                url=f"tg://user?id={config.OWNER_ID}",
+                callback_data="show_owner",
 
             ),
              InlineKeyboardButton(
 
-                text="『sᴜᴘᴘᴏʀᴛ』",
+                text="『🖤sᴜᴘᴘᴏʀᴛ😈』",
 
-                url=config.SUPPORT_CHANNEL,
+                url=config.SUPPORT_CHAT,
 
             ),
         ], 
