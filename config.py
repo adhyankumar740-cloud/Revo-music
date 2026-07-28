@@ -46,15 +46,11 @@ SONG_CACHE_SOURCE_CHANNELS = [
 # next request for it is an instant file_id-based hit — no re-download.
 ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "False").lower() == "true"
 
-# ⚠️ OPTIONAL fast-path: try yt-dlp directly (with a cookies.txt file) BEFORE
-# falling back to TgScrap. OFF by default — the existing TgScrap flow is
-# completely unaffected unless you explicitly turn this on. To disable again,
-# just set this back to False (or delete the env var) — nothing else to undo.
+# ⚠️ Fast-path: resolve/download audio via the external HF Space (yt-dlp
+# running server-side, see HF_RESOLVER_URL below) BEFORE falling back to
+# TgScrap. This is what makes the "live-stream hit (no download wait)" path
+# in the logs work.
 ENABLE_YTDLP_DIRECT_AUDIO = getenv("ENABLE_YTDLP_DIRECT_AUDIO", "False").lower() == "true"
-# Path to a Netscape-format cookies.txt (exported from a logged-in YouTube
-# browser session). Leave blank to try yt-dlp without cookies (works less
-# reliably on cloud/datacenter IPs).
-YTDLP_COOKIES_FILE = getenv("YTDLP_COOKIES_FILE", "cookies.txt")
 
 # --- Fast external resolver (HF Space running yt-dlp) -----------------------
 # Tried FIRST, before any local tier — typically resolves in 2-4s vs 15-20s
@@ -129,10 +125,6 @@ OWNER_ID = int(getenv("OWNER_ID", 85060382471)) # ⚠️ fill here or in .env
 HEROKU_APP_NAME = getenv("HEROKU_APP_NAME", None) # ⚠️ fill here or in .env if deploying on heroku
 # Get it from http://dashboard.heroku.com/account
 HEROKU_API_KEY = getenv("HEROKU_API_KEY", None) # ⚠️ fill here or in .env if deploying on heroku
-
-UPSTREAM_REPO = getenv("UPSTREAM_REPO", "https://github.com/mrxbroken011/BROKEN-X-MUSIC.git")
-UPSTREAM_BRANCH = getenv("UPSTREAM_BRANCH", "Master")
-GIT_TOKEN = getenv("GIT_TOKEN", None)  # Fill this variable if your upstream repository is private
 
 SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/+VSk-FT8RwWwzNDQ1") # ⚠️ fill Your channel link here
 SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/+VSk-FT8RwWwzNDQ1") # ⚠️ fill Chat group link here
