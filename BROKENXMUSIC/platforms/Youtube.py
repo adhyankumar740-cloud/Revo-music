@@ -664,6 +664,11 @@ class YouTubeAPI:
                 logger.error(f"❌ [RACE] direct branch failed for {query!r}: {e}")
                 details, path = None, None
             if details and path:
+                # Direct won before vkmusic_bot was ever needed — the
+                # tgscrap coroutine the caller built for us was never
+                # scheduled, so it must be closed explicitly or it leaks
+                # (RuntimeWarning: coroutine was never awaited).
+                tgscrap_coro.close()
                 logger.info(
                     f"✅ [RACE] direct won for {query!r} (vkmusic_bot never touched)"
                 )
