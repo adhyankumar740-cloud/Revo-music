@@ -2,8 +2,6 @@ aiofiles
 aiohttp
 beautifulsoup4
 dnspython
-gitpython
-hachoir
 motor
 pillow
 psutil
