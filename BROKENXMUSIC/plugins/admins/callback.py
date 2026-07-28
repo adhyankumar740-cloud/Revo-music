@@ -1,5 +1,3 @@
-rkup_timer())
-
 import asyncio
 
 from pyrogram import filters
@@ -26,6 +24,7 @@ from BROKENXMUSIC.utils.stream.autoclear import auto_clean
 from BROKENXMUSIC.utils.thumbnails import get_thumb
 from config import (
     BANNED_USERS,
+    OWNER_ID,
     SUPPORT_CHAT,
     SOUNCLOUD_IMG_URL,
     STREAM_IMG_URL,
@@ -462,4 +461,23 @@ async def markup_timer():
 
 
 asyncio.create_task(markup_timer())
+
+
+# The OWNER button on the play/stream panel used to be a `tg://user?id=`
+# URL button. That only opens reliably if the Telegram client already has
+# that user cached (contacts, shared chat, etc.) — with no username set,
+# many clients just do nothing when tapped. A callback that replies with a
+# proper text-mention works everywhere, since Telegram resolves a text
+# mention server-side (via the user object the bot fetches) instead of
+# leaving the client to resolve a bare ID on its own.
+@app.on_callback_query(filters.regex("^show_owner$"))
+async def show_owner_cb(client, CallbackQuery):
+    try:
+        owner = await client.get_users(OWNER_ID)
+        await CallbackQuery.answer()
+        await CallbackQuery.message.reply_text(f"👤 **Owner:** {owner.mention}")
+    except Exception:
+        await CallbackQuery.answer(
+            "Couldn't fetch owner info right now.", show_alert=True
+        )
 
