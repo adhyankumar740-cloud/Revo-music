@@ -269,10 +269,9 @@ async def stream(
                 forceplay=forceplay,
             )
             button = stream_markup(_, chat_id)
-            run = await app.send_photo(
+            run = await app.send_message(
                 original_chat_id,
-                photo=config.SOUNCLOUD_IMG_URL,
-                caption=_["stream_1"].format(
+                text=_["stream_1"].format(
                     config.SUPPORT_CHAT, title[:23], duration_min, user_name
                 ),
                 reply_markup=InlineKeyboardMarkup(button),
@@ -319,10 +318,9 @@ async def stream(
                 forceplay=forceplay,
             )
             button = stream_markup(_, chat_id)
-            run = await app.send_photo(
+            run = await app.send_message(
                 original_chat_id,
-                photo=config.SOUNCLOUD_IMG_URL,
-                caption=_["stream_1"].format(
+                text=_["stream_1"].format(
                     "Tg-Scrap (VK Music)", title[:23], duration_min, user_name
                 ),
                 reply_markup=InlineKeyboardMarkup(button),
@@ -373,10 +371,9 @@ async def stream(
             if video:
                 await add_active_video_chat(chat_id)
             button = stream_markup(_, chat_id)
-            run = await app.send_photo(
+            run = await app.send_message(
                 original_chat_id,
-                photo=config.TELEGRAM_VIDEO_URL if video else config.TELEGRAM_AUDIO_URL,
-                caption=_["stream_1"].format(link, title[:23], duration_min, user_name),
+                text=_["stream_1"].format(link, title[:23], duration_min, user_name),
                 reply_markup=InlineKeyboardMarkup(button),
             )
             db[chat_id][0]["mystic"] = run
