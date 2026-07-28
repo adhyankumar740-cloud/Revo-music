@@ -2,6 +2,7 @@ import math
 from pyrogram.types import InlineKeyboardButton
 from BROKENXMUSIC.utils.formatters import time_to_seconds
 from BROKENXMUSIC import app
+import config
 
 
 
@@ -64,16 +65,16 @@ def stream_markup_timer(_, chat_id, played, dur):
         [
             InlineKeyboardButton(
 
-                text="『😈ᴏᴡɴᴇʀ✨』",
+                text="『ᴏᴡɴᴇʀ』",
 
-                url=f"https://t.me/mrbrokn",
+                url=f"tg://user?id={config.OWNER_ID}",
 
             ),
             InlineKeyboardButton(
 
-                text="『🖤sᴜᴘᴘᴏʀᴛ😈』",
+                text="『sᴜᴘᴘᴏʀᴛ』",
 
-                url=f"https://t.me/+GdYztKC7jPk1N2Y1",
+                url=config.SUPPORT_CHANNEL,
 
             ),
        ],
@@ -98,16 +99,16 @@ def stream_markup(_, chat_id):
         [
             InlineKeyboardButton(
 
-                text="『😈ᴏᴡɴᴇʀ✨』",
+                text="『ᴏᴡɴᴇʀ』",
 
-                url=f"https://t.me/mrbrokn",
+                url=f"tg://user?id={config.OWNER_ID}",
 
             ),
              InlineKeyboardButton(
 
-                text="『🖤sᴜᴘᴘᴏʀᴛ😈』",
+                text="『sᴜᴘᴘᴏʀᴛ』",
 
-                url=f"https://t.me/+GdYztKC7jPk1N2Y1",
+                url=config.SUPPORT_CHANNEL,
 
             ),
         ], 
