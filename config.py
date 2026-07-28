@@ -122,7 +122,7 @@ LOCAL_CACHE_ENABLED = getenv("LOCAL_CACHE_ENABLED", "True").lower() == "true"
 LOCAL_CACHE_MAX_MB = int(getenv("LOCAL_CACHE_MAX_MB", 400))
 
 # Chat id of a group for logging bot's activities
-LOGGER_ID = int(getenv("LOGGER_ID",https://t.me/+YI5ZPmi9J5VjMjhl)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
+LOGGER_ID = int(getenv("LOGGER_ID",-5466660938)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
 
 
 OWNER_ID = int(getenv("OWNER_ID")) # ⚠️ fill here or in .env
