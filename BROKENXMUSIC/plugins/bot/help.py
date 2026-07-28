@@ -1,3 +1,4 @@
+import random
 from typing import Union
 
 from pyrogram import filters, types
@@ -39,7 +40,7 @@ async def helper_private(
         _ = get_string(language)
         keyboard = help_pannel(_)
         await update.reply_photo(
-            photo=START_IMG_URL,
+            photo=random.choice(START_IMG_URL),
             caption=_["help_1"].format(SUPPORT_CHAT),
             reply_markup=keyboard,
         )
