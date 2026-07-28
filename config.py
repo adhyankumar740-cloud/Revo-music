@@ -7,7 +7,7 @@ from pyrogram import filters
 load_dotenv()
 
 
-API_ID = int(getenv("API_ID", 35852042)) # ⚠️ fill here or in .env
+API_ID = int(getenv("API_ID")) # ⚠️ fill here or in .env
 API_HASH = getenv("API_HASH", "") # ⚠️ fill here or in .env
 
 # Get your token from @BotFather on Telegram.
@@ -122,10 +122,10 @@ LOCAL_CACHE_ENABLED = getenv("LOCAL_CACHE_ENABLED", "True").lower() == "true"
 LOCAL_CACHE_MAX_MB = int(getenv("LOCAL_CACHE_MAX_MB", 400))
 
 # Chat id of a group for logging bot's activities
-LOGGER_ID = int(getenv("LOGGER_ID", -1002094142057)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
+LOGGER_ID = int(getenv("LOGGER_ID",https://t.me/+YI5ZPmi9J5VjMjhl)) # ⚠️ fill here or in .env and ensure that bot and assistant bot are admin in log group 
 
 
-OWNER_ID = int(getenv("OWNER_ID", 85060382471)) # ⚠️ fill here or in .env
+OWNER_ID = int(getenv("OWNER_ID")) # ⚠️ fill here or in .env
 
 ## Fill these variables if you're deploying on heroku.
 # Your heroku app name
@@ -133,8 +133,8 @@ HEROKU_APP_NAME = getenv("HEROKU_APP_NAME", None) # ⚠️ fill here or in .env 
 # Get it from http://dashboard.heroku.com/account
 HEROKU_API_KEY = getenv("HEROKU_API_KEY", None) # ⚠️ fill here or in .env if deploying on heroku
 
-SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/+VSk-FT8RwWwzNDQ1") # ⚠️ fill Your channel link here
-SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/+VSk-FT8RwWwzNDQ1") # ⚠️ fill Chat group link here
+SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/TimeStudios01") # ⚠️ fill Your channel link here
+SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/+qZBUgJbCwYw5ZTJl") # ⚠️ fill Chat group link here
 
 # Set this to True if you want the assistant to automatically leave chats after an interval
 AUTO_LEAVING_ASSISTANT = bool(getenv("AUTO_LEAVING_ASSISTANT", False))
