@@ -51,13 +51,13 @@ SONG_CACHE_SOURCE_CHANNELS = [
 # into a fast MongoDB-indexed local library (see BROKENXMUSIC/platforms/SongCache.py).
 # Every song freshly pulled via TgScrap gets uploaded here and indexed, so the
 # next request for it is an instant file_id-based hit — no re-download.
-ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "False").lower() == "true"
+ENABLE_SONG_CACHE = getenv("ENABLE_SONG_CACHE", "True").lower() == "true"
 
 # ⚠️ Fast-path: resolve/download audio via the external HF Space (yt-dlp
 # running server-side, see HF_RESOLVER_URL below) BEFORE falling back to
 # TgScrap. This is what makes the "live-stream hit (no download wait)" path
 # in the logs work.
-ENABLE_YTDLP_DIRECT_AUDIO = getenv("ENABLE_YTDLP_DIRECT_AUDIO", "False").lower() == "true"
+ENABLE_YTDLP_DIRECT_AUDIO = getenv("ENABLE_YTDLP_DIRECT_AUDIO", "True").lower() == "true"
 
 # --- Fast external resolver (HF Space running yt-dlp) -----------------------
 # Tried FIRST, before any local tier — typically resolves in 2-4s vs 15-20s
