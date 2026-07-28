@@ -92,13 +92,13 @@ SONG_CACHE_INDEX_ASSISTANT = (
 # streaming audio into them. That account's Pyrogram connection is then
 # NEVER used for TgScrap (VK-bot scraping) or SongCache file fetching/
 # indexing — those all run on the OTHER assistants instead (round-robin
-# across whichever ones are left, see SongCache._live_pool). This keeps the
-# playback assistant free to instantly join new calls instead of being busy
-# mid-download when a new /play comes in.
-# Default "1" (matches STRING_SESSION). Needs 2+ assistants configured to
-# actually matter — with only 1 assistant, it obviously has to do everything.
-# Set to "" / unset to go back to the old fully-random assistant-per-chat behaviour.
-DEDICATED_PLAY_ASSISTANT = getenv("DEDICATED_PLAY_ASSISTANT", "1")
+# across whichever ones are left, see SongCache._live_pool).
+# Default is OFF ("") — every group gets a RANDOMLY assigned assistant for
+# playback, so with 5 assistants configured, playback load spreads across
+# all 5 instead of funneling every group through a single account. Set this
+# to a number (1-5) only if you specifically want one assistant reserved
+# purely for playback and never for scraping/fetching.
+DEDICATED_PLAY_ASSISTANT = getenv("DEDICATED_PLAY_ASSISTANT", "")
 DEDICATED_PLAY_ASSISTANT = (
     int(DEDICATED_PLAY_ASSISTANT) if DEDICATED_PLAY_ASSISTANT and DEDICATED_PLAY_ASSISTANT.isdigit() else None
 )
