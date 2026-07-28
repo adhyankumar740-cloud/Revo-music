@@ -126,8 +126,13 @@ async def stream(
                     ),
                     reply_markup=InlineKeyboardMarkup(button),
                 )
-                db[chat_id][0]["mystic"] = run
-                db[chat_id][0]["markup"] = "stream"
+                # Guard against the StreamEnded/change_stream race: the queue
+                # entry we just added can be popped (and db[chat_id] cleared)
+                # by a concurrent change_stream() while we were awaiting the
+                # send above, so re-check before indexing.
+                if db.get(chat_id):
+                    db[chat_id][0]["mystic"] = run
+                    db[chat_id][0]["markup"] = "stream"
         if count == 0:
             return
         else:
@@ -227,8 +232,13 @@ async def stream(
                 ),
                 reply_markup=InlineKeyboardMarkup(button),
             )
-            db[chat_id][0]["mystic"] = run
-            db[chat_id][0]["markup"] = "stream"
+            # Guard against the StreamEnded/change_stream race: the queue
+            # entry we just added can be popped (and db[chat_id] cleared)
+            # by a concurrent change_stream() while we were awaiting the
+            # send above, so re-check before indexing.
+            if db.get(chat_id):
+                db[chat_id][0]["mystic"] = run
+                db[chat_id][0]["markup"] = "stream"
     elif streamtype == "soundcloud":
         file_path = result["filepath"]
         title = result["title"]
@@ -276,8 +286,13 @@ async def stream(
                 ),
                 reply_markup=InlineKeyboardMarkup(button),
             )
-            db[chat_id][0]["mystic"] = run
-            db[chat_id][0]["markup"] = "tg"
+            # Guard against the StreamEnded/change_stream race: the queue
+            # entry we just added can be popped (and db[chat_id] cleared)
+            # by a concurrent change_stream() while we were awaiting the
+            # send above, so re-check before indexing.
+            if db.get(chat_id):
+                db[chat_id][0]["mystic"] = run
+                db[chat_id][0]["markup"] = "tg"
     elif streamtype == "tgscrap":
         file_path = result["filepath"]
         title = result["title"]
@@ -325,8 +340,13 @@ async def stream(
                 ),
                 reply_markup=InlineKeyboardMarkup(button),
             )
-            db[chat_id][0]["mystic"] = run
-            db[chat_id][0]["markup"] = "tg"
+            # Guard against the StreamEnded/change_stream race: the queue
+            # entry we just added can be popped (and db[chat_id] cleared)
+            # by a concurrent change_stream() while we were awaiting the
+            # send above, so re-check before indexing.
+            if db.get(chat_id):
+                db[chat_id][0]["mystic"] = run
+                db[chat_id][0]["markup"] = "tg"
     elif streamtype == "telegram":
         file_path = result["path"]
         link = result["link"]
@@ -376,8 +396,13 @@ async def stream(
                 text=_["stream_1"].format(link, title[:23], duration_min, user_name),
                 reply_markup=InlineKeyboardMarkup(button),
             )
-            db[chat_id][0]["mystic"] = run
-            db[chat_id][0]["markup"] = "tg"
+            # Guard against the StreamEnded/change_stream race: the queue
+            # entry we just added can be popped (and db[chat_id] cleared)
+            # by a concurrent change_stream() while we were awaiting the
+            # send above, so re-check before indexing.
+            if db.get(chat_id):
+                db[chat_id][0]["mystic"] = run
+                db[chat_id][0]["markup"] = "tg"
     elif streamtype == "live":
         link = result["link"]
         vidid = result["vidid"]
@@ -457,8 +482,13 @@ async def stream(
                 ),
                 reply_markup=InlineKeyboardMarkup(button),
             )
-            db[chat_id][0]["mystic"] = run
-            db[chat_id][0]["markup"] = "tg"
+            # Guard against the StreamEnded/change_stream race: the queue
+            # entry we just added can be popped (and db[chat_id] cleared)
+            # by a concurrent change_stream() while we were awaiting the
+            # send above, so re-check before indexing.
+            if db.get(chat_id):
+                db[chat_id][0]["mystic"] = run
+                db[chat_id][0]["markup"] = "tg"
     elif streamtype == "index":
         link = result
         title = "ɪɴᴅᴇx ᴏʀ ᴍ3ᴜ8 ʟɪɴᴋ"
@@ -507,6 +537,11 @@ async def stream(
                 caption=_["stream_2"].format(user_name),
                 reply_markup=InlineKeyboardMarkup(button),
             )
-            db[chat_id][0]["mystic"] = run
-            db[chat_id][0]["markup"] = "tg"
+            # Guard against the StreamEnded/change_stream race: the queue
+            # entry we just added can be popped (and db[chat_id] cleared)
+            # by a concurrent change_stream() while we were awaiting the
+            # send above, so re-check before indexing.
+            if db.get(chat_id):
+                db[chat_id][0]["mystic"] = run
+                db[chat_id][0]["markup"] = "tg"
             await mystic.delete()
