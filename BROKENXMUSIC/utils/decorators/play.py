@@ -106,8 +106,9 @@ def PlayWrapper(command):
         else:
             chat_id = message.chat.id
             channel = None
-        playmode = await get_playmode(message.chat.id)
-        playty = await get_playtype(message.chat.id)
+        playmode, playty = await asyncio.gather(
+            get_playmode(message.chat.id), get_playtype(message.chat.id)
+        )
         if playty != "Everyone":
             if message.from_user.id not in SUDOERS:
                 admins = adminlist.get(message.chat.id)
