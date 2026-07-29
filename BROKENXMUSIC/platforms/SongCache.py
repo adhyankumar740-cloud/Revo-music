@@ -610,8 +610,30 @@ class SongCacheAPI:
                 caption=title,
             )
         except Exception as e:
-            logger.error(f"[SongCache] Upload to cache channel failed for {title!r}: {e}")
-            return False
+            # The picked assistant may not have resolved this peer yet
+            # (freshly started, or joined the cache channel after its
+            # startup dialog warm-up) — Telegram then rejects the raw
+            # chat_id with CHAT_ID_INVALID/PEER_ID_INVALID. Same fix as
+            # _refresh_file_id: re-walk get_dialogs() once to populate the
+            # peer cache, then retry a single time before giving up.
+            logger.error(
+                f"[SongCache] Upload to cache channel failed for {title!r} "
+                f"(retrying after peer warm-up): {e}"
+            )
+            await _warm_peer_cache(client)
+            try:
+                msg = await client.send_audio(
+                    self.cache_channel,
+                    local_filepath,
+                    title=title,
+                    caption=title,
+                )
+            except Exception as e2:
+                logger.error(
+                    f"[SongCache] Upload to cache channel failed for {title!r} "
+                    f"even after peer warm-up: {e2}"
+                )
+                return False
 
         file_id = getattr(msg.audio, "file_id", None) or getattr(msg.voice, "file_id", None)
         if not file_id:
