@@ -179,18 +179,8 @@ AYU = [
 
 # ⚠️ change images urls if you want to change 
 
-START_IMG_URL = [
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-     "https://files.catbox.moe/2le6ng.png", 
-]
+START_IMG_URL = getenv("START_IMG_URL", "https://files.catbox.moe/2le6ng.png")
+     
 
 PING_IMG_URL = getenv(
     "PING_IMG_URL", "https://files.catbox.moe/wcf1mg.png"
