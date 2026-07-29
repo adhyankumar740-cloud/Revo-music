@@ -1,3 +1,4 @@
+roken = Call()
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -88,15 +89,27 @@ class Call(PyTgCalls):
         video: bool,
         ffmpeg: str | None = None,
     ) -> types.MediaStream:
+        # A raw googlevideo.com/videoplayback URL (used by the direct-stream
+        # "no download wait" path) is unreliable without headers that match
+        # what a browser/yt-dlp would send: Google's CDN can return a 403 or
+        # a non-media error page, which ffprobe then reports upstream as
+        # NoAudioSourceFound even though the stream normally has audio.
+        # Passing a matching User-Agent + Referer avoids that. This is a
+        # no-op for local file paths.
+        base_params = "-threads 1 -probesize 5M -analyzeduration 5M"
+        if isinstance(source, str) and "googlevideo.com" in source:
+            base_params += (
+                ' -user_agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" '
+                '-headers "Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com\r\n"'
+            )
         return types.MediaStream(
             media_path=source,
             audio_parameters=types.AudioQuality.MEDIUM,
             audio_flags=types.MediaStream.Flags.REQUIRED,
             video_flags=types.MediaStream.Flags.IGNORE,
             ffmpeg_parameters=(
-                f"-threads 1 -probesize 5M -analyzeduration 5M {ffmpeg}"
-                if ffmpeg
-                else "-threads 1 -probesize 5M -analyzeduration 5M"
+                f"{base_params} {ffmpeg}" if ffmpeg else base_params
             ),
         )
 
