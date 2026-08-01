@@ -448,6 +448,12 @@ class SongCacheAPI:
                 gen, first_chunk = await _open_gen(fresh_file_id)
                 if gen is not None:
                     file_id = fresh_file_id
+                    # Keep the closure's entry dict current too — _pump()'s
+                    # self-heal path below reads entry["file_id"] directly,
+                    # and without this it would retry the same already-dead
+                    # id (and pay for a second refresh) instead of reusing
+                    # the good one we just fetched.
+                    entry["file_id"] = fresh_file_id
 
         if gen is None:
             logger.error(
