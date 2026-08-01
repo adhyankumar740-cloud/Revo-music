@@ -95,7 +95,24 @@ class Call(PyTgCalls):
         # NoAudioSourceFound even though the stream normally has audio.
         # Passing a matching User-Agent + Referer avoids that. This is a
         # no-op for local file paths.
-        base_params = "-threads 1 -probesize 5M -analyzeduration 5M"
+        # .fifo sources (SongCache/TgScrap progressive streaming) are fed
+        # live, chunk-by-chunk, as Telegram/yt-dlp delivers them — NOT a
+        # fully-buffered local file. -probesize/-analyzeduration 5M tells
+        # ffmpeg to wait until it has ~5MB (or 5s) buffered before it even
+        # starts, which a slow-trickling pipe often can't satisfy fast
+        # enough. While ffmpeg sits there waiting, pytgcalls' own startup
+        # timeout gives up on the stream and kills the reader — which shows
+        # up on our side as a "Broken pipe" write error. Treat a .fifo
+        # source like a live stream instead: small probe size + low-delay
+        # flags so ffmpeg starts consuming as soon as the first bytes land.
+        is_pipe = isinstance(source, str) and source.endswith(".fifo")
+        if is_pipe:
+            base_params = (
+                "-threads 1 -fflags nobuffer -flags low_delay "
+                "-probesize 32k -analyzeduration 0"
+            )
+        else:
+            base_params = "-threads 1 -probesize 5M -analyzeduration 5M"
         if isinstance(source, str) and "googlevideo.com" in source:
             base_params += (
                 ' -user_agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
