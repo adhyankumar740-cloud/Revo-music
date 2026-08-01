@@ -29,6 +29,8 @@ from BROKENXMUSIC.utils.stream.autoclear import auto_clean
 from BROKENXMUSIC.utils.thumbnails import get_thumb as gen_thumb
 from strings import get_string
 
+_logger = LOGGER("Call")
+
 autoend = {}
 counter = {}
 
@@ -143,13 +145,17 @@ class Call(PyTgCalls):
                 stream=stream,
                 config=types.GroupCallConfig(auto_start=False),
             )
-        except exceptions.NoActiveGroupCall:
+        except exceptions.NoActiveGroupCall as e:
+            _logger.error(f"[Call] play() -> NoActiveGroupCall for chat_id={chat_id}: {e}")
             raise
-        except exceptions.NoAudioSourceFound:
+        except exceptions.NoAudioSourceFound as e:
+            _logger.error(f"[Call] play() -> NoAudioSourceFound for chat_id={chat_id}: {e}")
             raise
-        except (ConnectionNotFound, TelegramServerError):
+        except (ConnectionNotFound, TelegramServerError) as e:
+            _logger.error(f"[Call] play() -> {type(e).__name__} for chat_id={chat_id}: {e}")
             raise
-        except Exception:
+        except Exception as e:
+            _logger.error(f"[Call] play() -> unexpected {type(e).__name__} for chat_id={chat_id}: {e}")
             raise
 
     async def pause_stream(self, chat_id: int):
@@ -602,6 +608,11 @@ class Call(PyTgCalls):
             async def _update_handler(_, update: types.Update, _client=client):
                 if isinstance(update, types.StreamEnded):
                     if update.stream_type == types.StreamEnded.Type.AUDIO:
+                        _logger.info(
+                            f"[Call] StreamEnded(AUDIO) for chat_id={update.chat_id} "
+                            f"— pytgcalls reports ffmpeg finished reading its "
+                            f"input; advancing/leaving via change_stream()."
+                        )
                         await self.change_stream(_client, update.chat_id)
                 elif isinstance(update, types.ChatUpdate):
                     if update.status in [
@@ -609,6 +620,10 @@ class Call(PyTgCalls):
                         types.ChatUpdate.Status.LEFT_GROUP,
                         types.ChatUpdate.Status.CLOSED_VOICE_CHAT,
                     ]:
+                        _logger.info(
+                            f"[Call] ChatUpdate status={update.status} for "
+                            f"chat_id={update.chat_id} — stopping stream."
+                        )
                         await self.stop_stream(update.chat_id)
 
 Broken = Call()
