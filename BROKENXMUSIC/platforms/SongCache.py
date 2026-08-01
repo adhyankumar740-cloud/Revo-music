@@ -412,6 +412,20 @@ class SongCacheAPI:
             return track_details, local_hit
 
         client, _ = await _resolve_client(entry.get("client_source"))
+
+        # If there's no assistant free to dedicate to this fetch (i.e. the
+        # SAME account that's about to hold the live voice-chat connection
+        # would also have to pull this song's bytes from Telegram), don't
+        # progressively pipe it into a FIFO. That makes one account do two
+        # network-heavy jobs at once — the call negotiation/keepalive competes
+        # with the download for the same connection, the FIFO starves, and
+        # ffmpeg/pytgcalls gives up on it after a few seconds (shows up as a
+        # "Broken pipe" write on our side, followed by a StreamEnded once
+        # pytgcalls notices ffmpeg died). Downloading the whole file up front
+        # avoids any network activity on that account during playback itself.
+        if len(_live_pool()) < 1 or len(assistants) <= 1:
+            return await self.fetch_file(entry, save_dir=save_dir)
+
         file_id = entry.get("file_id")
         if not file_id:
             return await self.fetch_file(entry, save_dir=save_dir)
