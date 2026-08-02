@@ -4,11 +4,6 @@ from BROKENXMUSIC.core.userbot import Userbot
 from BROKENXMUSIC.misc import dbb, heroku
 
 from .logging import LOGGER
-try:
-    from pyrogram.raw.types import KeyboardButtonStyle
-    print("MOJOOD HAI ✅")
-except ImportError:
-    print("NAHI HAI ❌")
 dirr()
 dbb()
 heroku()
