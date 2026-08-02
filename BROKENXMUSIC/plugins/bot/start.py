@@ -2,7 +2,7 @@ import time
 import asyncio
 import random
 from pyrogram import filters
-from pyrogram.enums import ChatType
+from pyrogram.enums import ChatType, ButtonStyle
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from py_yt import VideosSearch
 
@@ -83,8 +83,8 @@ async def start_pm(client, message: Message, _):
             key = InlineKeyboardMarkup(
                 [
                     [
-                        InlineKeyboardButton(text=_["S_B_8"], url=link),
-                        InlineKeyboardButton(text=_["S_B_2"], url=config.SUPPORT_CHAT),
+                        InlineKeyboardButton(text=_["S_B_8"], url=link, style=ButtonStyle.SUCCESS),
+                        InlineKeyboardButton(text=_["S_B_2"], url=config.SUPPORT_CHAT, style=ButtonStyle.PRIMARY),
                     ],
                 ]
             )
