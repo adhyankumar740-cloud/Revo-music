@@ -1,5 +1,6 @@
 from pykeyboard import InlineKeyboard
 from pyrogram import filters
+from pyrogram.enums import ButtonStyle
 from pyrogram.types import InlineKeyboardButton, Message
 
 from BROKENXMUSIC import app
@@ -17,6 +18,7 @@ def lanuages_keyboard(_):
                 InlineKeyboardButton(
                     text=languages_present[i],
                     callback_data=f"languages:{i}",
+                    style=ButtonStyle.PRIMARY,
                 )
             )
             for i in languages_present
@@ -26,8 +28,9 @@ def lanuages_keyboard(_):
         InlineKeyboardButton(
             text=_["BACK_BUTTON"],
             callback_data=f"settingsback_helper",
+            style=ButtonStyle.PRIMARY,
         ),
-        InlineKeyboardButton(text=_["CLOSE_BUTTON"], callback_data=f"close"),
+        InlineKeyboardButton(text=_["CLOSE_BUTTON"], callback_data=f"close", style=ButtonStyle.DANGER),
     )
     return keyboard
 
