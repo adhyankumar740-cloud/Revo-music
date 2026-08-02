@@ -179,7 +179,11 @@ AYU = [
 
 # ⚠️ change images urls if you want to change 
 
-START_IMG_URL = getenv("START_IMG_URL", "https://files.catbox.moe/2le6ng.png")
+START_IMG_URL = [
+    u.strip()
+    for u in getenv("START_IMG_URL", "https://files.catbox.moe/2le6ng.png").split(",")
+    if u.strip()
+]
      
 
 PING_IMG_URL = getenv(
