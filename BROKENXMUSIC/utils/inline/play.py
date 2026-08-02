@@ -1,5 +1,6 @@
 import math
 from pyrogram.types import InlineKeyboardButton
+from pyrogram.enums import ButtonColor
 from BROKENXMUSIC.utils.formatters import time_to_seconds
 from BROKENXMUSIC import app
 import config
@@ -56,11 +57,11 @@ def stream_markup_timer(_, chat_id, played, dur):
         bar = "—————————◉"
     buttons = [
         [
-            InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}"),
-            InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}"),
-            InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
-            InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}"),
-            InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}"),
+            InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}", color=ButtonColor.SUCCESS),
+            InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}", color=ButtonColor.PRIMARY),
+            InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}", color=ButtonColor.PRIMARY),
+            InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}", color=ButtonColor.PRIMARY),
+            InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}", color=ButtonColor.DANGER),
         ],
         [
             InlineKeyboardButton(
@@ -90,11 +91,11 @@ def stream_markup(_, chat_id):
     
     buttons = [
         [
-            InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}"),
-            InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}"),
-            InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
-            InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}"),
-            InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}"),
+            InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}", color=ButtonColor.SUCCESS),
+            InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}", color=ButtonColor.PRIMARY),
+            InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}", color=ButtonColor.PRIMARY),
+            InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}", color=ButtonColor.PRIMARY),
+            InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}", color=ButtonColor.DANGER),
         ],
         [
             InlineKeyboardButton(
